@@ -1,0 +1,86 @@
+name: diagnose-disk
+
+# Is the disk a finished macOS system, or only Apple's recovery environment?
+#
+# The boot log from the last run repeated this and never reached a desktop:
+#
+#   BdsDxe: failed to load Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0xA,0x0): Not Found
+#   BdsDxe: loading Boot0002 "UEFI Misc Device 2" from PciRoot(0x0)/Pci(0x5,0x0)
+#   BdsDxe: starting Boot0002 "UEFI Misc Device 2" from PciRoot(0x0)/Pci(0x5,0x0)
+#
+# addr 0xa is data.img and addr 0x5 is OpenCore (the two virtio-blk devices in
+# boot-golden.sh). So OpenCore runs, the picker finds no macOS volume, and the
+# firmware retries. Two explanations, needing opposite fixes:
+#
+#   A. data.img holds only recovery - startosinstall finished its prepare phase,
+#      which is literally what launch.sh waits on ("waiting for reboot"). Then no
+#      system exists yet and the booter is fine.
+#   B. data.img holds a finished system that OpenCore cannot see.
+#
+# The GPT and the filesystem signatures separate these without guessing, which is
+# the whole point: everything established so far has come from the artefact.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: "Run id holding the macos-golden artifact"
+        required: true
+        default: "40200666406"
+      artifact_name:
+        description: "Artifact name holding the disk"
+        required: false
+        default: "macos-golden"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils gdisk
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h / | tail -1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact_name }}
+          path: disk
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.artifact_run }}
+
+      - name: to raw
+        run: |
+          set -eux
+          f=$(find disk -name '*.qcow2' | head -1)
+          qemu-img info "$f"
+          qemu-img convert -O raw "$f" disk.raw
+          ls -la disk.raw
+          df -h /
+
+      - name: gpt
+        run: sgdisk -p disk.raw || true
+
+      - name: layout and signatures
+        run: python3 scripts/disk-layout.py disk.raw
+
+      - name: strings sweep of the first 2 GiB
+        run: |
+          set -eux
+          dd if=disk.raw bs=1M count=2048 2>/dev/null \
+            | strings -n 6 \
+            | grep -Eo "Apple_APFS|Macintosh HD|Apple_HFS|BaseSystem|Install macOS|Preboot|Recovery|disk[0-9]s[0-9]" \
+            | sort | uniq -c | sort -rn | head -25 || true
