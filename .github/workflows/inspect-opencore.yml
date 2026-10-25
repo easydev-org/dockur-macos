@@ -1,0 +1,80 @@
+name: inspect-opencore
+
+# Does the OpenCore we boot actually carry an APFS driver?
+#
+# The disk image settled the shape of the disk but not the verdict: GPT has an
+# EFI System Partition and one 65 GiB APFS container, the strings sweep found 283
+# BaseSystem hits against only 8 for "Macintosh HD". That fits a recovery-only
+# disk, but it also fits a finished system where the label is written once.
+#
+# This is the cheap decisive check instead. OpenCore cannot list a macOS volume
+# at all unless it can read APFS, so compare what the config enables against what
+# the image ships. Uses the 671 MB launcher artifact from the last run rather than
+# the 28 GiB disk, so it takes minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_artifact_run:
+        description: "Run id holding the macos-image-fixed artifact"
+        required: true
+        default: "40200666406"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-image-fixed
+          path: img
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.image_artifact_run }}
+
+      - name: load
+        run: |
+          set -eux
+          docker load -i img/image.tar
+          docker tag "$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)" launcher:inspect
+          docker images launcher:inspect
+
+      # The image carries the official OpenCore release tree at /opencore/<flavour>/EFI.
+      # That is the tree boot.sh copies drivers and kexts from.
+      - name: what the image ships
+        run: |
+          set -eux
+          docker run --rm --entrypoint sh launcher:inspect -c '
+            echo "=== /opencore ==="
+            ls -la /opencore/ 2>/dev/null || echo "no /opencore"
+            echo
+            echo "=== release drivers ==="
+            ls -1 /opencore/release/EFI/OC/Drivers/ 2>/dev/null | tee /tmp/drivers.txt || echo "no drivers dir"
+            echo
+            echo "=== APFS driver anywhere ==="
+            find /opencore -iname "*apfs*" 2>/dev/null || echo "NO APFS DRIVER FOUND"
+            echo
+            echo "=== version ==="
+            cat /opencore/version 2>/dev/null || echo unknown
+            echo
+            echo "=== kexts ==="
+            ls -1 /opencore/release/EFI/OC/Kexts/ 2>/dev/null || true
+          '
+
+      - name: driver listing for the comparison
+        run: |
+          set -eux
+          docker run --rm --entrypoint sh launcher:inspect -c \
+            'ls -1 /opencore/release/EFI/OC/Drivers/ 2>/dev/null' > /tmp/have.txt || : > /tmp/have.txt
+          wc -l /tmp/have.txt
+          cat /tmp/have.txt
+
+      - name: compare against the config
+        run: python3 scripts/check-drivers.py assets/config.plist /tmp/have.txt
