@@ -177,9 +177,15 @@ jobs:
           #
           # So require two settled windows separated by renewed growth: one quiet
           # stretch is a phase boundary, two means the disk really stopped.
-          STABLE_POLLS: "10"      # 5 minutes of no growth ends a phase
-          PHASES: "2"
-          MAX_POLLS: "240"        # hard ceiling ~120 minutes
+          # ONE phase here, not two. This container runs startosinstall's
+          # prepare stage and then launch.sh sleeps waiting for a reboot that
+          # dockur never sends - power.sh only defines finish(), which shuts
+          # down. Stage 2 cannot start inside this container no matter how long
+          # we watch, so waiting for two phases here just burns the ceiling.
+          # Stage 2 is provoked and measured by the resume step below.
+          STABLE_POLLS: "10"      # 5 minutes of no growth = prepare done
+          PHASES: "1"
+          MAX_POLLS: "120"        # ~60 minutes is ample for the prepare stage
         run: |
           set -eux
           last=-1
@@ -311,6 +317,13 @@ jobs:
           echo "disk after the stage2 window: ${after}MiB (delta $((after - before))MiB)"
           if [ "$after" -gt "$before" ]; then
             echo "STAGE 2 RAN: the disk grew by $((after - before))MiB"
+          elif [ "$after" -lt $((before - 2000)) ]; then
+            # A large drop means dockur's hasData() judged the disk empty and
+            # install() started over with `rm -f "$dest"` - the exact failure
+            # this step exists to avoid, so fail loudly rather than carry on.
+            echo "::error::the disk SHRANK from ${before}MiB to ${after}MiB - dockur reinstalled instead of continuing"
+            docker logs --tail 80 macstage2 || true
+            exit 1
           else
             echo "::warning::the disk did not grow - stage 2 may not have run"
           fi
