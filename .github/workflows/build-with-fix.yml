@@ -212,20 +212,25 @@ jobs:
           echo "=== storage tree ==="
           find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
 
-      # Prove the freshly installed disk actually boots to a desktop before
-      # calling it golden.
+      # Prove the freshly installed disk boots to a desktop - with qemu directly,
+      # NOT by starting the dockur container again.
       #
-      # "Installation finished" only means startosinstall finished writing. It
-      # says nothing about first boot: the firstboot LaunchDaemon still has to
-      # run, create the account, skip Setup Assistant and log in. The previous
-      # attempt tried to check this in a SEPARATE workflow that downloaded the
-      # 25.6 GiB artifact first - and the download alone took over 24 minutes,
-      # more than the boot and screenshot it was there to perform. Doing it here
-      # costs one restart of a disk that is already on local storage.
+      # The previous attempt did reuse the container with MANUAL=Y and it could
+      # never finish: storage climbed to 28500 MiB, dropped to 770 MiB at 1380 s,
+      # then climbed again. Cause, from dockur's own utils.sh:
       #
-      # MANUAL=Y so dockur sees an existing disk and boots it instead of
-      # installing again.
-      - name: reboot the installed disk and look at the desktop
+      #   hasData() { cmp -s -n 102400 "$source" /dev/zero || rc=$?
+      #               case "$rc" in 0) return 1 ;; ... esac }
+      #
+      # A disk whose first 100 KiB are blank is judged empty and install() runs,
+      # which begins with `rm -f "$dest"`. So the container reinstalls instead of
+      # booting, and no "disk stopped growing" test can ever settle.
+      #
+      # easysandbox-macos sidesteps this by never using dockur's scripts: it
+      # assembles qemu-system-x86_64 itself. scripts/boot-golden.sh does the same,
+      # with the argument set copied from a working dockur run and base.dmg (the
+      # installer) left off. A pre-installed disk should be up in ~2 minutes.
+      - name: boot the golden disk directly and look at the desktop
         id: desktop
         run: |
           set -eux
@@ -233,37 +238,39 @@ jobs:
           docker stop -t 300 macbake || true
           docker rm -f macbake || true
 
-          echo "=== booting the disk again ==="
-          docker run -d --name macboot \
-            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
-            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
-            -e MANUAL=Y \
-            -v "$GITHUB_WORKSPACE/storage:/storage" \
-            "${{ needs.build.outputs.image }}"
-          sleep 30
-          docker logs --tail 40 macboot || true
+          # KVM access for the runner user, and the tools the script needs.
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo apt-get install -y -qq qemu-system-x86
 
-          # Two looks: first boot does account creation and the Setup Assistant
-          # skip, so an early screenshot can catch it mid-way. 7 minutes then 5
-          # more is enough for macOS to settle on the desktop.
+          chmod +x scripts/boot-golden.sh
+          sudo -E bash scripts/boot-golden.sh \
+            "$GITHUB_WORKSPACE/storage/14" \
+            /tmp/golden-monitor.sock \
+            300 &
+          BOOT_WAIT=$!
+          sleep 150
+
+          # Two looks 5 minutes apart: first boot does account creation and the
+          # Setup Assistant skip, so an early frame can catch it mid-way.
           shot() {
-            local out="$1"
-            docker cp scripts/shotsock.py macboot:/tmp/shotsock.py >/dev/null 2>&1 || return 1
-            docker exec macboot python3 /tmp/shotsock.py /run/shm/monitor.sock "/tmp/$out.ppm" >/dev/null 2>&1 || return 1
-            docker cp "macboot:/tmp/$out.ppm" "./$out.ppm" >/dev/null 2>&1 || return 1
-            python3 scripts/ppm2png.py "./$out.ppm" "./$out.png" || true
-            ls -la "./$out.png" 2>/dev/null || true
+            python3 scripts/shotsock.py /tmp/golden-monitor.sock "./$1.ppm" || return 1
+            python3 scripts/ppm2png.py "./$1.ppm" "./$1.png" || true
+            ls -la "./$1.png" 2>/dev/null || true
           }
 
-          echo "=== first look (7 min) ==="
-          sleep 420
-          docker ps -a
-          docker logs --tail 60 macboot || true
+          echo "=== first look ==="
           shot desktop1 || echo "first screenshot failed"
-
-          echo "=== second look (5 min later) ==="
+          echo "=== second look, 5 minutes later ==="
           sleep 300
           shot desktop2 || echo "second screenshot failed"
+
+          # qemu is a background child; stop it before extract touches the disk.
+          kill "$(cat /tmp/qemu-boot.pid 2>/dev/null)" 2>/dev/null || true
+          wait "$BOOT_WAIT" 2>/dev/null || true
+          echo "=== qemu log ==="
+          tail -40 /tmp/qemu-boot.log 2>/dev/null || true
 
           # The picture is the verdict. ppm2png prints the distinct colour count
           # and fails on a single-colour framebuffer, so a black screen is caught
@@ -283,8 +290,8 @@ jobs:
         run: |
           set -eux
           echo "stopping the guest"
-          docker stop -t 300 macboot || true
-          docker rm -f macboot || true
+          kill "$(cat /tmp/qemu-boot.pid 2>/dev/null)" 2>/dev/null || true
+          sleep 5
 
           # Find the disk by asking the filesystem, not by guessing a name.
           SRC=""
