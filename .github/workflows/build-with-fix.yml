@@ -254,8 +254,13 @@ jobs:
 
           # Two looks 5 minutes apart: first boot does account creation and the
           # Setup Assistant skip, so an early frame can catch it mid-way.
+          #
+          # sudo, because qemu was started with sudo and the monitor socket is
+          # therefore owned by root: connecting as the runner user failed with
+          # 'PermissionError: [Errno 13] Permission denied' on every attempt.
           shot() {
-            python3 scripts/shotsock.py /tmp/golden-monitor.sock "./$1.ppm" || return 1
+            sudo python3 scripts/shotsock.py /tmp/golden-monitor.sock "./$1.ppm" || return 1
+            sudo chown "$(id -u):$(id -g)" "./$1.ppm" 2>/dev/null || true
             python3 scripts/ppm2png.py "./$1.ppm" "./$1.png" || true
             ls -la "./$1.png" 2>/dev/null || true
           }
@@ -266,8 +271,19 @@ jobs:
           sleep 300
           shot desktop2 || echo "second screenshot failed"
 
-          # qemu is a background child; stop it before extract touches the disk.
-          kill "$(cat /tmp/qemu-boot.pid 2>/dev/null)" 2>/dev/null || true
+          # Stop qemu before extract touches the disk.
+          #
+          # kill on the recorded pid was not enough: qemu runs under sudo, so its
+          # parent is the sudo wrapper and the disk kept a write lock, which made
+          # qemu-img fail with 'Failed to get shared "write" lock'. Match the
+          # process by name and wait for it to actually disappear.
+          sudo pkill -f "qemu-system-x86_64.*data.img" 2>/dev/null || true
+          for _ in $(seq 1 30); do
+            pgrep -f "qemu-system-x86_64.*data.img" >/dev/null 2>&1 || break
+            sleep 2
+          done
+          pgrep -f "qemu-system-x86_64.*data.img" >/dev/null 2>&1 && sudo pkill -9 -f "qemu-system-x86_64.*data.img" || true
+          sleep 3
           wait "$BOOT_WAIT" 2>/dev/null || true
           echo "=== qemu log ==="
           tail -40 /tmp/qemu-boot.log 2>/dev/null || true
@@ -290,8 +306,16 @@ jobs:
         run: |
           set -eux
           echo "stopping the guest"
-          kill "$(cat /tmp/qemu-boot.pid 2>/dev/null)" 2>/dev/null || true
-          sleep 5
+          sudo pkill -f "qemu-system-x86_64" 2>/dev/null || true
+          for _ in $(seq 1 30); do
+            pgrep -f "qemu-system-x86_64.*data.img" >/dev/null 2>&1 || break
+            sleep 2
+          done
+          # Belt and braces: prove no process holds the image before converting.
+          if pgrep -f "qemu-system-x86_64.*data.img" >/dev/null 2>&1; then
+            echo "::error::qemu still running, refusing to touch the disk"
+            exit 1
+          fi
 
           # Find the disk by asking the filesystem, not by guessing a name.
           SRC=""

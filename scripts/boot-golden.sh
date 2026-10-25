@@ -105,16 +105,25 @@ qemu-system-x86_64 \
   -fw_cfg name=opt/org.tianocore/UninstallMemAttrProtocol,string=y \
   > /tmp/qemu-boot.log 2>&1 &
 
-QPID=$!
+# Capture the REAL qemu pid, not the pid of this script or of sudo: killing the
+# wrapper leaves qemu holding a write lock on the disk, and qemu-img then fails
+# with 'Failed to get shared "write" lock'. $! is qemu only when qemu is the
+# foreground child, so look it up by name after it starts.
+QPID=""
+for _ in $(seq 1 20); do
+  QPID=$(pgrep -f "qemu-system-x86_64.*$DISK" | head -1 || true)
+  [ -n "$QPID" ] && break
+  sleep 0.5
+done
 echo "$QPID" > /tmp/qemu-boot.pid
-echo "qemu pid $QPID"
+echo "qemu pid ${QPID:-unknown}"
 
 # Watch the framebuffer settle: the point of this script is that a pre-installed
 # disk comes up in a minute or two, not fifty.
 end=$((SECONDS + SECONDS_TO_RUN))
 while [ "$SECONDS" -lt "$end" ]; do
-  kill -0 "$QPID" 2>/dev/null || { echo "qemu exited early"; tail -40 /tmp/qemu-boot.log; exit 1; }
+  pgrep -f "qemu-system-x86_64.*$DISK" >/dev/null 2>&1 || { echo "qemu exited early"; tail -40 /tmp/qemu-boot.log; exit 1; }
   sleep 10
 done
 
-echo "boot window elapsed; qemu still running: $(kill -0 "$QPID" 2>/dev/null && echo yes || echo no)"
+if pgrep -f "qemu-system-x86_64.*$DISK" >/dev/null 2>&1; then echo "qemu still running"; else echo "qemu stopped"; fi
