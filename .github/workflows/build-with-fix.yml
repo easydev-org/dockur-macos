@@ -144,24 +144,115 @@ jobs:
           sleep 30
           docker logs --tail 50 macbake || true
 
-      # Does the installer write without a human? storage_used counts base.dmg,
-      # boot.img and data.img together, so passing ~2 GB means it started.
-      - name: waiting for the installer to write
+      # Wait for the INSTALL TO FINISH, not merely to start.
+      #
+      # The measured timeline from the previous run, with a working unattended
+      # path: 765 MiB while the recovery image downloads (~8 min), then a jump to
+      # 1418 MiB and 2386 MiB once startosinstall begins writing. A full install
+      # keeps growing for tens of minutes after that.
+      #
+      # There is no single marker to poll here. bootstrap.done exists only inside
+      # the guest at /Volumes/installstate, and after startosinstall's prepare
+      # phase launch.sh ends in "while :; do sleep 60; done" waiting for a reboot,
+      # so the container never exits by itself. What the host CAN see is the disk:
+      # du over the mount climbs while the installer writes and stops when it
+      # finishes. So: require it to have grown past the download baseline, then
+      # require it to be unchanged for STABLE polls in a row.
+      - name: wait for the install to finish
+        id: wait
+        env:
+          POLL: "30"
+          STABLE_POLLS: "10"      # 5 minutes of no growth = finished writing
+          MAX_POLLS: "160"        # hard ceiling ~80 minutes
         run: |
           set -eux
-          for i in $(seq 1 60); do
-            sleep 30
+          baseline=0
+          last=-1
+          stable=0
+          started=0
+          for i in $(seq 1 "$MAX_POLLS"); do
+            sleep "$POLL"
             used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
-            echo "[$((i*30))s] storage_used=${used}MiB"
-            if [ "$used" -gt 2000 ]; then echo "INSTALLER WRITING (${used}MiB)"; break; fi
+            echo "[$((i*POLL))s] storage_used=${used}MiB stable=${stable}"
+
+            if [ "$used" -lt 2000 ]; then
+              # still downloading the recovery image, or not started yet
+              :
+            else
+              started=1
+            fi
+
+            if [ "$used" = "$last" ]; then
+              stable=$((stable + 1))
+            else
+              stable=0
+            fi
+            last=$used
+
+            if [ "$started" = "1" ] && [ "$stable" -ge "$STABLE_POLLS" ]; then
+              echo "INSTALL SETTLED at ${used}MiB after $((i*POLL))s"
+              break
+            fi
+
             if ! docker ps --format '{{.Names}}' | grep -qx macbake; then
-              echo "container exited"; docker logs --tail 100 macbake || true; break
+              echo "container exited"
+              docker logs --tail 120 macbake || true
+              break
             fi
           done
+
+          if [ "$started" = "0" ]; then
+            echo "::error::the installer never wrote more than 2000MiB - the unattended path did not run"
+            docker logs --tail 120 macbake || true
+            exit 1
+          fi
+
           echo "=== unattended markers in the container log ==="
-          docker logs macbake 2>&1 | grep -Ei "preparing automated|patched launch|startosinstall|bootstrap" | head -20 || echo none
+          docker logs macbake 2>&1 | grep -Ei "preparing automated|patched launch|startosinstall|bootstrap|erasing" | head -20 || echo none
           echo "=== storage tree ==="
           find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
+
+      # Hand the guest an ACPI shutdown so the disk is consistent, then convert.
+      # data.img is a raw 64 GiB image under /storage/<version>/, not a qcow2 and
+      # not at /storage/data.img - the Windows bake made exactly that mistake.
+      - name: extract the golden disk
+        if: success()
+        run: |
+          set -eux
+          echo "stopping the guest"
+          docker stop -t 300 macbake || true
+
+          # Find the disk by asking the filesystem, not by guessing a name.
+          SRC=""
+          while IFS= read -r f; do
+            [ "$(stat -c %s "$f" 2>/dev/null || echo 0)" -gt $((8*1024*1024*1024)) ] || continue
+            case "$f" in *.dmg|*.iso|*.img.old) continue ;; esac
+            if qemu-img info "$f" >/dev/null 2>&1; then SRC="$f"; break; fi
+          done < <(find "$GITHUB_WORKSPACE/storage" -type f -printf "%s %p\n" 2>/dev/null | sort -rn | cut -d" " -f2-)
+
+          if [ -z "$SRC" ]; then
+            echo "::error::no disk image found"
+            find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" | sort -rn | head -20
+            exit 1
+          fi
+
+          echo "extracting $SRC"
+          ls -la "$SRC"
+          du -h "$SRC"
+          # -c compresses stored clusters. The image becomes an overlay backing
+          # file, so the decompression cost is paid once per sandbox.
+          qemu-img convert -O qcow2 -c "$SRC" "$GITHUB_WORKSPACE/macos-golden.qcow2"
+          ls -la "$GITHUB_WORKSPACE/macos-golden.qcow2"
+          qemu-img info "$GITHUB_WORKSPACE/macos-golden.qcow2"
+          du -h "$GITHUB_WORKSPACE/macos-golden.qcow2"
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: macos-golden
+          path: ${{ github.workspace }}/macos-golden.qcow2
+          retention-days: 7
+          compression-level: 0
 
       - name: screenshot
         if: always()
