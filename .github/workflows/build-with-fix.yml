@@ -212,15 +212,79 @@ jobs:
           echo "=== storage tree ==="
           find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
 
-      # Hand the guest an ACPI shutdown so the disk is consistent, then convert.
-      # data.img is a raw 64 GiB image under /storage/<version>/, not a qcow2 and
-      # not at /storage/data.img - the Windows bake made exactly that mistake.
+      # Prove the freshly installed disk actually boots to a desktop before
+      # calling it golden.
+      #
+      # "Installation finished" only means startosinstall finished writing. It
+      # says nothing about first boot: the firstboot LaunchDaemon still has to
+      # run, create the account, skip Setup Assistant and log in. The previous
+      # attempt tried to check this in a SEPARATE workflow that downloaded the
+      # 25.6 GiB artifact first - and the download alone took over 24 minutes,
+      # more than the boot and screenshot it was there to perform. Doing it here
+      # costs one restart of a disk that is already on local storage.
+      #
+      # MANUAL=Y so dockur sees an existing disk and boots it instead of
+      # installing again.
+      - name: reboot the installed disk and look at the desktop
+        id: desktop
+        run: |
+          set -eux
+          echo "=== stopping the installer container ==="
+          docker stop -t 300 macbake || true
+          docker rm -f macbake || true
+
+          echo "=== booting the disk again ==="
+          docker run -d --name macboot \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            "${{ needs.build.outputs.image }}"
+          sleep 30
+          docker logs --tail 40 macboot || true
+
+          # Two looks: first boot does account creation and the Setup Assistant
+          # skip, so an early screenshot can catch it mid-way. 7 minutes then 5
+          # more is enough for macOS to settle on the desktop.
+          shot() {
+            local out="$1"
+            docker cp scripts/shotsock.py macboot:/tmp/shotsock.py >/dev/null 2>&1 || return 1
+            docker exec macboot python3 /tmp/shotsock.py /run/shm/monitor.sock "/tmp/$out.ppm" >/dev/null 2>&1 || return 1
+            docker cp "macboot:/tmp/$out.ppm" "./$out.ppm" >/dev/null 2>&1 || return 1
+            python3 scripts/ppm2png.py "./$out.ppm" "./$out.png" || true
+            ls -la "./$out.png" 2>/dev/null || true
+          }
+
+          echo "=== first look (7 min) ==="
+          sleep 420
+          docker ps -a
+          docker logs --tail 60 macboot || true
+          shot desktop1 || echo "first screenshot failed"
+
+          echo "=== second look (5 min later) ==="
+          sleep 300
+          shot desktop2 || echo "second screenshot failed"
+
+          # The picture is the verdict. ppm2png prints the distinct colour count
+          # and fails on a single-colour framebuffer, so a black screen is caught
+          # rather than silently accepted.
+          if [ -s desktop1.png ] || [ -s desktop2.png ]; then
+            echo "screenshots captured"
+          else
+            echo "::warning::no screenshot could be captured"
+          fi
+
+      # Now stop it and take the disk. An ACPI shutdown first, so the filesystem
+      # is consistent. data.img is a raw 64 GiB image under /storage/<version>/,
+      # not a qcow2 at /storage/data.img - the Windows bake made exactly that
+      # mistake and spent three runs learning it.
       - name: extract the golden disk
         if: success()
         run: |
           set -eux
           echo "stopping the guest"
-          docker stop -t 300 macbake || true
+          docker stop -t 300 macboot || true
+          docker rm -f macboot || true
 
           # Find the disk by asking the filesystem, not by guessing a name.
           SRC=""
@@ -254,26 +318,23 @@ jobs:
           retention-days: 7
           compression-level: 0
 
-      - name: screenshot
-        if: always()
-        run: |
-          set -x
-          docker cp scripts/shotsock.py macbake:/tmp/shotsock.py || true
-          docker exec macbake python3 /tmp/shotsock.py /run/shm/monitor.sock /tmp/shot.ppm || true
-          docker cp macbake:/tmp/shot.ppm ./screen.ppm || true
-          if [ -s screen.ppm ]; then python3 scripts/ppm2png.py screen.ppm screen.png || true; fi
-          ls -la screen.* 2>/dev/null || true
-
+      # The desktop screenshots taken after the reboot. Uploaded always, because
+      # a black or Recovery screen IS the result worth looking at when something
+      # went wrong.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: macos-fixed-result
+          name: macos-desktop
           path: |
-            screen.png
-            screen.ppm
+            desktop1.png
+            desktop1.ppm
+            desktop2.png
+            desktop2.ppm
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 14
 
       - name: stop
         if: always()
-        run: docker rm -f macbake || true
+        run: |
+          docker rm -f macbake 2>/dev/null || true
+          docker rm -f macboot 2>/dev/null || true
