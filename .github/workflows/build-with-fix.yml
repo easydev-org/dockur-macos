@@ -1,0 +1,188 @@
+name: build-with-fix
+
+# Build dockur/macos against qemux/qemu:7.50 - the base upstream pins - by
+# working around the one line that cannot work, then verify the unattended code
+# is actually inside the result.
+#
+# Established in CI by diagnose-build:
+#   exclude  FAIL  failed to calculate checksum ... "/etc/alternatives/awk.1.gz"
+#   repair   FAIL  deleting the dangling link first does not help
+#   plain    OK    COPY the whole tree, then rm the binary in the same layer
+#   rsync    OK    tar inside the source container, untar into scratch
+#
+# plain is the smaller change and leaves no extra bytes (COPY and RUN land in
+# the same layer), so that is what patch_upstream.py applies.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_bake:
+        description: "Also attempt a macOS install with the built image"
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        run: |
+          set -eux
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      # Show the two lines we care about before and after, so the patch is
+      # visible in the log rather than trusted.
+      - name: patch the Dockerfile
+        run: |
+          set -eux
+          echo "=== before ==="
+          grep -n "exclude" Dockerfile || true
+          python3 dockerfiles/patch_upstream.py Dockerfile
+          echo "=== after ==="
+          sed -n '1,12p' Dockerfile
+
+      - name: build
+        id: tag
+        run: |
+          set -eux
+          img="dockur-macos-fixed:${{ github.run_number }}"
+          docker build --progress=plain -t "$img" .
+          docker image inspect "$img" --format 'id={{.Id}} size={{.Size}}'
+          echo "image=$img" >> "$GITHUB_OUTPUT"
+
+      # The whole point of the build: the unattended path must be inside. This is
+      # the check that failed against the published v3.12 image, where /run had no
+      # image.sh at all and every marker was absent.
+      - name: is the unattended code in the image
+        run: |
+          set -eux
+          docker run --rm --entrypoint sh "${{ steps.tag.outputs.image }}" -c '
+            echo "--- /run ---"
+            ls -1 /run/*.sh 2>/dev/null | xargs -n1 basename
+            echo "--- prepareAutomatedRecovery ---"
+            grep -l prepareAutomatedRecovery /run/*.sh 2>/dev/null || echo ABSENT
+            echo "--- patchRecoveryBootstrap ---"
+            grep -l patchRecoveryBootstrap /run/*.sh 2>/dev/null || echo ABSENT
+            echo "--- Preparing automated ---"
+            grep -l "Preparing automated" /run/*.sh 2>/dev/null || echo ABSENT
+            echo "--- MANUAL default (this build should default to Y, unattended is opt-in) ---"
+            grep -n "MANUAL" /run/install.sh 2>/dev/null | head -5 || echo "no MANUAL in install.sh"
+            echo "--- install/ tree ---"
+            find /run/install -type f 2>/dev/null | sort || echo "no /run/install"
+            echo "--- version ---"
+            cat /etc/version 2>/dev/null || echo none
+          '
+
+      - name: export for the bake job
+        if: github.event.inputs.run_bake == 'true'
+        run: |
+          set -eux
+          docker save "${{ steps.tag.outputs.image }}" -o /tmp/image.tar
+          ls -la /tmp/image.tar
+
+      - uses: actions/upload-artifact@v4
+        if: github.event.inputs.run_bake == 'true'
+        with:
+          name: macos-image-fixed
+          path: /tmp/image.tar
+          retention-days: 2
+          compression-level: 0
+
+  bake:
+    needs: build
+    if: github.event.inputs.run_bake == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-image-fixed
+          path: /tmp/img
+
+      - name: load
+        run: docker load -i /tmp/img/image.tar
+
+      - name: start
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/storage"
+          # MANUAL=N is what selects the automated branch; the image defaults to
+          # Y. NET_ADMIN + /dev/net/tun are needed for a real NAT bridge, without
+          # which macOS cannot reach Apple to fetch the rest of the installer.
+          docker run -d --name macbake \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=N \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            "${{ needs.build.outputs.image }}"
+          sleep 30
+          docker logs --tail 50 macbake || true
+
+      # Does the installer write without a human? storage_used counts base.dmg,
+      # boot.img and data.img together, so passing ~2 GB means it started.
+      - name: waiting for the installer to write
+        run: |
+          set -eux
+          for i in $(seq 1 60); do
+            sleep 30
+            used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
+            echo "[$((i*30))s] storage_used=${used}MiB"
+            if [ "$used" -gt 2000 ]; then echo "INSTALLER WRITING (${used}MiB)"; break; fi
+            if ! docker ps --format '{{.Names}}' | grep -qx macbake; then
+              echo "container exited"; docker logs --tail 100 macbake || true; break
+            fi
+          done
+          echo "=== unattended markers in the container log ==="
+          docker logs macbake 2>&1 | grep -Ei "preparing automated|patched launch|startosinstall|bootstrap" | head -20 || echo none
+          echo "=== storage tree ==="
+          find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
+
+      - name: screenshot
+        if: always()
+        run: |
+          set -x
+          docker cp scripts/shotsock.py macbake:/tmp/shotsock.py || true
+          docker exec macbake python3 /tmp/shotsock.py /run/shm/monitor.sock /tmp/shot.ppm || true
+          docker cp macbake:/tmp/shot.ppm ./screen.ppm || true
+          if [ -s screen.ppm ]; then python3 scripts/ppm2png.py screen.ppm screen.png || true; fi
+          ls -la screen.* 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-fixed-result
+          path: |
+            screen.png
+            screen.ppm
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: stop
+        if: always()
+        run: docker rm -f macbake || true
