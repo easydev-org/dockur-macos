@@ -287,7 +287,7 @@ jobs:
         id: resume
         env:
           POLL: "30"
-          MAX_POLLS: "160"        # ~80 minutes of stage 2
+          MAX_POLLS: "120"        # 60 minutes, then stop and look at the state
         run: |
           set -eux
           before=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)

@@ -189,9 +189,48 @@ install_bootstrap() {
     return 1
   fi
 
-  if ! /usr/bin/cmp -s "$ADMIN_PACKAGE" "$staged_admin" ||
-     ! /usr/bin/cmp -s "$FIRSTBOOT_SCRIPT" "$staged_script" ||
-     ! /usr/bin/cmp -s "$FIRSTBOOT_PLIST" "$staged_plist"; then
+  # Verify the staged copies, but do not assume /usr/bin/cmp exists.
+  #
+  # macOS Recovery does not ship cmp, and this code path is only ever reached
+  # from Recovery. The original form
+  #
+  #   if ! /usr/bin/cmp -s "$ADMIN_PACKAGE" "$staged_admin" || ...
+  #
+  # therefore always took the failure branch: the shell could not execute cmp,
+  # the ! turned that into success, and stage_firstboot returned 1 with
+  #
+  #   [log] ERROR: staged first-boot files failed byte-for-byte validation
+  #   [log] ERROR: bootstrap installation failed; cancelling prepared install
+  #
+  # even though the packages had installed cleanly just before:
+  #
+  #   installer: The install was successful.
+  #   [log] prebuilt Setup Assistant package installed successfully
+  #
+  # That is what aborted every bake: bootstrap.done never appeared, so launch.sh
+  # never sent USR1 to startosinstall, the --rebootdelay 300 never elapsed, and
+  # the disk stopped growing for good.
+  #
+  # Use shasum when present (it is part of the base system), and fall back to
+  # accepting the copy when neither tool exists - the preceding cp already
+  # checked its exit status, so a missing checksum tool must not be fatal.
+  _same_file() {
+    local a="$1" b="$2"
+    if [ -x /usr/bin/cmp ]; then
+      /usr/bin/cmp -s "$a" "$b"
+    elif [ -x /usr/bin/shasum ]; then
+      [ "$(/usr/bin/shasum -a 256 < "$a")" = "$(/usr/bin/shasum -a 256 < "$b")" ]
+    elif [ -x /usr/bin/md5 ]; then
+      [ "$(/usr/bin/md5 -q "$a")" = "$(/usr/bin/md5 -q "$b")" ]
+    else
+      # No checksum tool in this environment; sizes at least must agree.
+      [ "$(wc -c < "$a")" = "$(wc -c < "$b")" ]
+    fi
+  }
+
+  if ! _same_file "$ADMIN_PACKAGE" "$staged_admin" ||
+     ! _same_file "$FIRSTBOOT_SCRIPT" "$staged_script" ||
+     ! _same_file "$FIRSTBOOT_PLIST" "$staged_plist"; then
     echo "[log] ERROR: staged first-boot files failed byte-for-byte validation"
     return 1
   fi
