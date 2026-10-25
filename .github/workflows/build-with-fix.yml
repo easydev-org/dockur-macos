@@ -187,6 +187,12 @@ jobs:
           started=0
           phase=0
           peak=0
+          # Size at which the current phase settled. The next phase may only be
+          # counted once the disk has grown past this again. Without it the loop
+          # counted the same quiet stretch twice - both phases reported at
+          # 27306 MiB without the disk moving - which is exactly how a
+          # stage-1-only disk would slip through.
+          settled_at=0
           for i in $(seq 1 "$MAX_POLLS"); do
             sleep "$POLL"
             used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
@@ -208,16 +214,19 @@ jobs:
             fi
             last=$used
 
-            if [ "$started" = "1" ] && [ "$stable" -ge "$STABLE_POLLS" ]; then
+            # A phase can only settle if the disk grew since the last settle. A
+            # second quiet window at the same size is the same phase observed
+            # twice, not a new one.
+            if [ "$started" = "1" ] && [ "$stable" -ge "$STABLE_POLLS" ] && [ "$used" -gt "$settled_at" ]; then
               phase=$((phase + 1))
+              settled_at=$used
               echo "PHASE $phase settled at ${used}MiB after $((i*POLL))s"
               if [ "$phase" -ge "$PHASES" ]; then
                 echo "INSTALL SETTLED after $phase phases at ${used}MiB (peak ${peak}MiB)"
                 break
               fi
-              # Reset so the next burst of growth needs its own quiet window.
+              # Require a fresh quiet window before counting again.
               stable=0
-              last=-1
             fi
 
             if ! docker ps --format '{{.Names}}' | grep -qx macbake; then
@@ -240,6 +249,73 @@ jobs:
           docker logs macbake 2>&1 | grep -Ei "preparing automated|patched startosinstall|startosinstall|bootstrap|erasing" | head -20 || echo none
           echo "=== storage tree ==="
           find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
+      # Trigger macOS's SECOND install stage, then boot the disk and look at it.
+      #
+      # install/recovery/launch.sh ends with:
+      #
+      #   echo "[log] startosinstall completed its prepare phase; waiting for reboot"
+      #   while :; do sleep 60; done
+      #
+      # That is startosinstall's PREPARE phase, launched with --rebootdelay 300, so
+      # it expects a reboot to carry on. dockur never restarts the container by
+      # itself - power.sh only defines finish(), which shuts down - so nothing
+      # comes back to run stage 2 and the disk stops in a recovery-only state.
+      # The disk diagnosis is consistent with exactly that: 283 BaseSystem strings
+      # against 8 for Macintosh HD, on a GPT with one 65 GiB APFS container.
+      #
+      # Restarting the container IS the reboot being waited for: firmware boots the
+      # half-installed disk, macOS's installer resumes, and the disk grows again.
+      # That growth is the evidence stage 2 ran - the container's own opinion does
+      # not matter, because hasData() judges by the first 100 KiB and may decide to
+      # reinstall.
+      - name: resume the install (the reboot startosinstall waits for)
+        id: resume
+        env:
+          POLL: "30"
+          MAX_POLLS: "160"        # ~80 minutes of stage 2
+        run: |
+          set -eux
+          before=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
+          echo "disk before restart: ${before}MiB"
+
+          docker rm -f macbake || true
+          docker run -d --name macstage2 \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            "${{ needs.build.outputs.image }}"
+          sleep 30
+          docker logs --tail 30 macstage2 || true
+
+          last=-1; stable=0; grew=0
+          for i in $(seq 1 "$MAX_POLLS"); do
+            sleep "$POLL"
+            used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
+            echo "[$((i*POLL))s] stage2 storage_used=${used}MiB (before=${before})"
+            if [ "$used" -gt "$before" ]; then grew=1; fi
+            if [ "$used" = "$last" ]; then stable=$((stable+1)); else stable=0; fi
+            last=$used
+            if [ "$grew" = "1" ] && [ "$stable" -ge 10 ] && [ "$used" -gt "$before" ]; then
+              echo "STAGE 2 SETTLED at ${used}MiB (grew from ${before}MiB)"
+              break
+            fi
+            if ! docker ps --format '{{.Names}}' | grep -qx macstage2; then
+              echo "stage2 container exited"
+              docker logs --tail 120 macstage2 || true
+              break
+            fi
+          done
+
+          after=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
+          echo "disk after the stage2 window: ${after}MiB (delta $((after - before))MiB)"
+          if [ "$after" -gt "$before" ]; then
+            echo "STAGE 2 RAN: the disk grew by $((after - before))MiB"
+          else
+            echo "::warning::the disk did not grow - stage 2 may not have run"
+          fi
+          docker stop -t 300 macstage2 || true
+          docker rm -f macstage2 || true
       - name: boot the golden disk directly and look at the desktop
         id: desktop
         run: |
@@ -254,17 +330,18 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo apt-get install -y -qq qemu-system-x86 mtools
 
-          # Replace the config inside boot.img BEFORE booting: the one the bake
-          # left behind has ShowPicker=true and HideAuxiliary=false, which is
-          # why the screenshot showed a menu with Reset NVRAM / Toggle SIP and no
-          # macOS volume. The template flips that to boot straight through, and
-          # the identity keys are carried over from the current config so macOS
-          # still sees the hardware it was installed against.
-          chmod +x scripts/fix-opencore.sh
-          sudo -E bash scripts/fix-opencore.sh \
-            "$GITHUB_WORKSPACE/storage/14" \
-            "$GITHUB_WORKSPACE/assets/config.plist"
-
+          # No config surgery here.
+          #
+          # I added a step that rewrote /EFI/OC/config.plist inside boot.img,
+          # expecting the bake's config to have ShowPicker=true. It does not:
+          # dockur copies the same assets/config.plist this repo ships, and that
+          # file already says ShowPicker=false, HideAuxiliary=true, Timeout=2.
+          #
+          # So the picker in the screenshot is not a policy problem. With no
+          # bootable volume to offer, OpenCore exhausts its 2-second timeout and
+          # stays on the menu it would otherwise have skipped. The fix belongs in
+          # the disk, not the config - and the extra step only added a way to
+          # fail before booting (mcopy against a partition offset I was guessing).
           chmod +x scripts/boot-golden.sh
           sudo -E bash scripts/boot-golden.sh \
             "$GITHUB_WORKSPACE/storage/14" \
