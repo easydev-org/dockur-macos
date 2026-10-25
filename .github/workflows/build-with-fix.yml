@@ -204,6 +204,15 @@ jobs:
             used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
             echo "[$((i*POLL))s] storage_used=${used}MiB stable=${stable} phase=${phase}/${PHASES}"
 
+            # Every fifth poll, read the installer bootstrap state from inside
+            # the container. launch.sh only reboots when bootstrap.done appears -
+            # that marker is what releases startosinstall's --rebootdelay 300 via
+            # USR1 - so its absence is why nothing ever restarts and the disk
+            # stops for good. The guest writes its own log beside the markers.
+            if [ $((i % 5)) -eq 0 ]; then
+              bash scripts/installstate-probe.sh macbake || true
+            fi
+
             if [ "$used" -lt 2000 ]; then
               # still downloading the recovery image, or not started yet
               :
@@ -283,6 +292,20 @@ jobs:
           set -eux
           before=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
           echo "disk before restart: ${before}MiB"
+
+          # Look at the bootstrap state BEFORE restarting. If bootstrap.done never
+          # appeared, the guest never finished its part and a restart will just
+          # reinstall from scratch - which is precisely what the previous run did
+          # (dockur logged "Downloading macOS recovery" and "Creating a 64 GB
+          # growable disk" again, and the disk dropped to 15 GiB).
+          echo "=== bootstrap state before restart ==="
+          bash scripts/installstate-probe.sh macbake || true
+
+          # Copy the guest-written logs out while the container still exists; they
+          # are gone once it is removed, and they say why bootstrap stopped.
+          mkdir -p guestlogs
+          docker cp macbake:/run/shm/installstate guestlogs/. 2>/dev/null ||             echo "could not copy installstate (nothing there)"
+          ls -la guestlogs/ 2>/dev/null | head -20 || true
 
           docker rm -f macbake || true
           docker run -d --name macstage2 \
@@ -492,6 +515,8 @@ jobs:
           path: |
             desktop*.png
             desktop*.ppm
+            guestlogs/**
+            guestlogs/*
           if-no-files-found: warn
           retention-days: 14
 
