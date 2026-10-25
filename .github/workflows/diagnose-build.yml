@@ -1,0 +1,98 @@
+name: diagnose-build
+
+# Why does  COPY --from=qemux/qemu:7.50 --exclude=usr/bin/qemu-system-x86_64 / /
+# fail with
+#   failed to calculate checksum ... "/etc/alternatives/awk.1.gz": not found
+#
+# The base image stays at 7.50 - that is what upstream pins and what we build
+# against - so the question is what in 7.50 breaks BuildKit's file walk and how
+# to copy the tree anyway. Each candidate is a real docker build, so the answer
+# is whether it exits 0, not a theory about BuildKit.
+#
+# Everything runs in CI; nothing is reproduced locally.
+
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Base image to inspect"
+        required: false
+        default: "qemux/qemu:7.50"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: pull the base image
+        run: |
+          set -eux
+          docker pull "${{ github.event.inputs.base }}"
+          docker image inspect "${{ github.event.inputs.base }}" --format '{{.Id}}'
+
+      # The error names /etc/alternatives/awk.1.gz, which smells like a dangling
+      # symlink: BuildKit opens every entry to checksum it, follows the link, and
+      # finds nothing. Print the link and whether its target resolves.
+      - name: what is /etc/alternatives/awk.1.gz
+        run: |
+          set -eux
+          docker run --rm --entrypoint sh "${{ github.event.inputs.base }}" -c '
+            echo "=== ls ==="
+            ls -la /etc/alternatives/awk.1.gz || echo MISSING
+            echo "=== readlink -f ==="
+            readlink -f /etc/alternatives/awk.1.gz || echo unresolvable
+            echo "=== raw target ==="
+            readlink /etc/alternatives/awk.1.gz || true
+            echo "=== dangling links under /etc/alternatives ==="
+            find /etc/alternatives -maxdepth 1 -xtype l -print 2>/dev/null || true
+          '
+
+      # BuildKit walks the whole tree, so any dangling link can upset it, not
+      # just this one. Count them and show the first few.
+      - name: all dangling symlinks in the image
+        run: |
+          set -eux
+          docker run --rm --entrypoint sh "${{ github.event.inputs.base }}" -c '
+            echo "--- first 40 ---"
+            find / -xdev -xtype l -print 2>/dev/null | head -40 || true
+            echo "--- total ---"
+            find / -xdev -xtype l -print 2>/dev/null | wc -l
+          '
+
+  # Which COPY formulation actually succeeds against 7.50? Each Dockerfile lives
+  # in dockerfiles/ so the heredoc indentation never fights the YAML.
+  copy-variants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [exclude, plain, repair, rsync]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: show the candidate
+        run: cat "dockerfiles/${{ matrix.variant }}.Dockerfile"
+
+      - name: build it
+        run: |
+          set -eux
+          docker build --progress=plain \
+            -f "dockerfiles/${{ matrix.variant }}.Dockerfile" \
+            -t "variant-${{ matrix.variant }}:test" dockerfiles
+          echo "RESULT ${{ matrix.variant }}: BUILD SUCCEEDED"
+
+      - name: does the result look like the base
+        if: success()
+        run: |
+          set -x
+          docker run --rm --entrypoint sh "variant-${{ matrix.variant }}:test" -c '
+            echo "run scripts:"; ls /run/*.sh 2>/dev/null | wc -l
+            echo "qemu binary:"; ls -la /usr/bin/qemu-system-x86_64 2>/dev/null || echo absent
+            echo "awk link:"; ls -la /etc/alternatives/awk.1.gz 2>/dev/null || echo absent
+          ' || true
