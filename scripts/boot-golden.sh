@@ -67,7 +67,23 @@ CPU="Skylake-Client-v4,kvm=on,l3-cache=on,+hypervisor,+invtsc,vendor=GenuineInte
 rm -f "$MONITOR"
 echo "booting $DISK (monitor $MONITOR, ${SECONDS_TO_RUN}s)"
 
-qemu-system-x86_64 \
+# Prefer a qemu supplied beside this script - the workflow copies one out of the
+# launcher image - over whatever is on PATH. Installing qemu from apt cost 1154
+# seconds on a previous run, and the image already ships the binary together with
+# /usr/share/qemu, so there is nothing to fetch.
+QEMU="$(cd "$(dirname "$0")/.." && pwd)/qemu/qemu-system-x86_64"
+if [ ! -x "$QEMU" ]; then
+  QEMU="$(command -v qemu-system-x86_64 || true)"
+fi
+[ -n "$QEMU" ] || { echo "no qemu-system-x86_64 available" >&2; exit 1; }
+echo "using qemu: $QEMU"
+
+# -L points at the firmware directory that came with that qemu; without it the
+# binary looks for its BIOS/option ROMs in the build-time prefix.
+QEMU_SHARE="$(dirname "$QEMU")/share"
+
+"$QEMU" \
+  -L "$QEMU_SHARE" \
   -nodefaults \
   -machine type=q35,smm=off,graphics=off,vmport=off,dump-guest-core=off,hpet=off,accel=kvm \
   -enable-kvm \

@@ -45,10 +45,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: tooling
+      # No apt. Installing qemu-system-x86 from the Ubuntu archive took 1154
+      # seconds on the last run - nineteen minutes of the whole job - and the
+      # launcher image already contains a working qemu-system-x86_64 with its
+      # firmware. qemu-utils is only needed for qemu-img, which is ~2 MB and
+      # installs in seconds.
+      #
+      # The image is pulled after the disk step, because pulling 640 MB is faster
+      # than what apt was doing, and the binary is copied out once it is here.
+      - name: qemu-utils only
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq qemu-utils qemu-system-x86
+          sudo apt-get install -y -qq qemu-utils
 
       - name: free disk space
         run: |
@@ -99,7 +107,17 @@ jobs:
           # Whatever firmware and OpenCore image exist in the image are reused;
           # the bake wrote them next to the disk and they are not in the artifact.
           docker cp assets:/opencore/version ./oc-version 2>/dev/null || true
+
+          # Take qemu from this image rather than installing it. The Dockerfile
+          # copies qemu-system-x86_64 and /usr/share/qemu out of qemux/qemu-macos,
+          # so the binary and its firmware are both already here. Measured: apt
+          # spent 1154 seconds - nineteen minutes - fetching the same thing.
+          mkdir -p qemu
+          docker cp assets:/usr/bin/qemu-system-x86_64 qemu/qemu-system-x86_64
+          docker cp assets:/usr/share/qemu qemu/share
           docker rm -f assets >/dev/null || true
+          chmod +x qemu/qemu-system-x86_64
+          ./qemu/qemu-system-x86_64 --version | head -1
           cat oc-version 2>/dev/null || true
           ls -la vm/
 
