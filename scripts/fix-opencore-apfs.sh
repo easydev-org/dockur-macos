@@ -58,6 +58,42 @@ do
   fi
 done
 
+# Fall back to the installer media the bake downloaded. macOS keeps the
+# firmware driver inside the recovery image's boot payload, and dockur leaves
+# that image next to the disk as setup.dmg.
+if [ -z "$FOUND" ] && [ -s "$(dirname "$DISK")/setup.dmg" ]; then
+  echo "ESP was empty; looking inside setup.dmg"
+  DMG="$(dirname "$DISK")/setup.dmg"
+  if 7z l "$DMG" 2>/dev/null | grep -i 'apfs' | head -5; then
+    # Extract every member whose name mentions apfs, then pick the .efi.
+    7z x -y -o"$WORK/dmg" "$DMG" '*apfs*' >/dev/null 2>&1 || true
+    cand=$(find "$WORK/dmg" -iname '*apfs*.efi' -o -iname 'apfs' 2>/dev/null | head -1)
+    if [ -n "$cand" ]; then
+      cp "$cand" "$WORK/apfs.efi"
+      echo "found inside setup.dmg: $cand"
+      FOUND="$cand"
+    fi
+  else
+    echo "no apfs member listed in setup.dmg"
+  fi
+fi
+
+# Last resort: the OpenCore release tree inside the launcher image. dockur
+# ships the official OpenCorePkg EFI at /opencore/release/EFI, and that tree
+# contains the driver set OpenCore itself uses.
+if [ -z "$FOUND" ] && [ -n "${LAUNCHER_IMAGE:-}" ]; then
+  echo "looking inside $LAUNCHER_IMAGE /opencore"
+  docker run --rm --entrypoint sh "$LAUNCHER_IMAGE" -c \
+    'find /opencore -iname "*apfs*" -o -iname "*.efi" | grep -i -E "apfs|HfsPlus" | head -20' \
+    > "$WORK/oc-drivers.txt" 2>/dev/null || true
+  cat "$WORK/oc-drivers.txt" || true
+  cand=$(grep -i apfs "$WORK/oc-drivers.txt" | head -1 || true)
+  if [ -n "$cand" ]; then
+    docker cp "$LAUNCHER_IMAGE:$cand" "$WORK/apfs.efi" 2>/dev/null || true
+    [ -s "$WORK/apfs.efi" ] && { echo "found: $cand"; FOUND="$cand"; }
+  fi
+fi
+
 if [ -z "$FOUND" ]; then
   echo "NO APFS DRIVER in the ESP - listing everything to be sure"
   mcopy -i "$WORK/esp.img" -s ::/ "$WORK/esp-tree" 2>/dev/null || true

@@ -312,9 +312,10 @@ jobs:
         id: apfs
         run: |
           set -eux
-          sudo apt-get install -y -qq mtools
+          sudo apt-get install -y -qq mtools p7zip-full
           chmod +x scripts/fix-opencore-apfs.sh
-          sudo bash scripts/fix-opencore-apfs.sh \
+          sudo -E LAUNCHER_IMAGE="${{ needs.build.outputs.image }}" \
+            bash scripts/fix-opencore-apfs.sh \
             "$GITHUB_WORKSPACE/storage/14/data.img" \
             "$GITHUB_WORKSPACE/storage/14/boot.img"
 
