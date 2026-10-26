@@ -64,7 +64,10 @@ done
 if [ -z "$FOUND" ] && [ -s "$(dirname "$DISK")/setup.dmg" ]; then
   echo "ESP was empty; looking inside setup.dmg"
   DMG="$(dirname "$DISK")/setup.dmg"
-  if 7z l "$DMG" 2>/dev/null | grep -i 'apfs' | head -5; then
+  # No pipe to head here: grep dying of SIGPIPE made the if-branch fail and the
+  # script report 'no apfs member' even though the listing had found plenty.
+  if 7z l "$DMG" 2>/dev/null | grep -i 'apfs' > "$WORK/dmg-apfs.txt" 2>/dev/null && [ -s "$WORK/dmg-apfs.txt" ]; then
+    head -5 "$WORK/dmg-apfs.txt"
     # Extract every member whose name mentions apfs, then pick the .efi.
     7z x -y -o"$WORK/dmg" "$DMG" '*apfs*' >/dev/null 2>&1 || true
     cand=$(find "$WORK/dmg" -iname '*apfs*.efi' -o -iname 'apfs' 2>/dev/null | head -1)

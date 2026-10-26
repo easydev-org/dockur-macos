@@ -215,6 +215,13 @@ jobs:
       # the config, and the AF0A container becomes readable.
       - name: give OpenCore an APFS driver from the disk itself
         id: apfs
+        # Not fatal any more. The driver is a nice-to-have: bootstrap.done means
+        # the install completed, and a completed install registers its own
+        # Preboot entry, which OpenCore can follow without an external APFS
+        # driver. If the driver cannot be found, boot anyway and find out -
+        # the previous runs never got this far, so there is no evidence yet that
+        # the driver is actually required.
+        continue-on-error: true
         run: |
           set -eux
           sudo apt-get install -y -qq mtools p7zip-full
