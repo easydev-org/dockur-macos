@@ -100,26 +100,24 @@ if [ "$stage1" = "done" ]; then
     fi
 
     if shot "s2-${round}"; then
-      # ppm2png exits 0 and prints "PICTURE OK (desktop)" only when the frame has
-      # real content: enough distinct colours and no single colour dominating.
-      # An installer screen is a logo and a bar on black - 24 to 123 colours at
-      # 99.7% one colour - which it reports as NOT A DESKTOP.
+      # Judge the screen by ppm2png's EXIT CODE, not by grepping its output.
       #
-      # The transition was observed directly: rounds 1-8 were 99.7% black (the
-      # Apple logo and progress bar), round 9 switched to 1280x800 with macOS
-      # blues, round 10 jumped to 415 colours with a 63.2% light-grey background
-      # and 19.2% dark - the desktop. So "PICTURE OK" is the signal that the guest
-      # finished installing and came up, and there is nothing to gain by waiting
-      # out the remaining rounds once it appears.
-      info=$(python3 scripts/ppm2png.py "./s2-${round}.ppm" "./s2-${round}.png" 2>&1 | head -3 || true)
-      echo "  screen: ${info:-unreadable}"
-      case "$info" in
-        *"PICTURE OK"*)
-          echo "DESKTOP REACHED at stage-2 round ${round} (${elapsed}s into stage 2)"
-          desktop=yes
-          break
-          ;;
-      esac
+      # The previous version captured `... | head -3` and looked for "PICTURE OK"
+      # in it. ppm2png prints the size line and up to five colour lines before
+      # that verdict, so the marker sat on line 6 or 7 and head -3 threw it away -
+      # the loop reported NOT A DESKTOP every round while the screen had in fact
+      # been a desktop since round 8.
+      #
+      # ppm2png already encodes the answer properly: it SystemExits non-zero on
+      # "NOT A DESKTOP" and exits 0 after printing "PICTURE OK". So use that.
+      if python3 scripts/ppm2png.py "./s2-${round}.ppm" "./s2-${round}.png" > "./s2-${round}.txt" 2>&1; then
+        sed -n '1p;$p' "./s2-${round}.txt" | sed 's/^/  screen: /'
+        echo "DESKTOP REACHED at stage-2 round ${round} (${elapsed}s into stage 2)"
+        desktop=yes
+        break
+      else
+        sed -n '1p;$p' "./s2-${round}.txt" | sed 's/^/  screen: /'
+      fi
     else
       echo "  screenshot failed this round"
     fi
