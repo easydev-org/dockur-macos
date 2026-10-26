@@ -117,7 +117,7 @@ def main():
     def advance(label, tries=5, wait=9):
         before = signature(mon, prefix + "-" + label + "-before")
         for attempt in range(1, tries + 1):
-            click(mon, CONTINUE[0], CONTINUE[1])
+            mon.click(CONTINUE[0], CONTINUE[1])
             time.sleep(wait)
             after = signature(mon, prefix + "-" + label + "-try%d" % attempt)
             log("%s attempt %d: before=%s after=%s" % (label, attempt, before, after))
@@ -131,7 +131,7 @@ def main():
     log("initial frame: %s" % (signature(mon, prefix + "-000"),))
 
     log("country: clicking a row so Continue can become active")
-    click(mon, COUNTRY_ROW[0], COUNTRY_ROW[1])
+    mon.click(COUNTRY_ROW[0], COUNTRY_ROW[1])
     time.sleep(3)
     log("after row click: %s" % (signature(mon, prefix + "-001"),))
     advance("country")

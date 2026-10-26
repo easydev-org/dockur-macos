@@ -32,6 +32,11 @@ on:
 permissions:
   contents: read
   actions: read
+  # checks: write is what lets log-stream create and update the check run it
+  # streams into. Without it the action answers:
+  #   cannot create a check run (403): Resource not accessible by integration
+  # and, correctly, carries on without streaming rather than failing the build.
+  checks: write
 
 jobs:
   deploy:
