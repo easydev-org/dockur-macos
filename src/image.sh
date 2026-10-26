@@ -356,6 +356,18 @@ prepareInstallationState() {
     info "Repair mode requested: the existing system will be kept and its Setup Assistant suppressed." && true
   fi
 
+  # Inspect mode: survey the disk and report, changing nothing. Used to establish
+  # what repair actually accomplished, since it reported success while the disk
+  # still booted to the country picker.
+  if enabled "${INSPECT_ONLY:-}"; then
+    if ! : > "$state/inspect"; then
+      error "Failed to request inspect mode."
+      return 1
+    fi
+    chmod 0644 "$state/inspect"
+    info "Inspect mode requested: the disk will be surveyed and nothing changed." && true
+  fi
+
   return 0
 }
 

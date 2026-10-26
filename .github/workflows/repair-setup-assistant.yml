@@ -30,6 +30,19 @@ on:
         description: "Run id holding macos-golden and macos-image-fixed"
         required: true
         default: "40304160694"
+      mode:
+        description: "repair writes the markers; inspect only reports what is on the disk"
+        type: choice
+        options:
+          - repair
+          - inspect
+        required: false
+        default: repair
+      verify:
+        description: "Boot the disk afterwards and screenshot the result"
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
@@ -105,7 +118,8 @@ jobs:
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
             -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=N \
-            -e REPAIR_ONLY=1 \
+            -e REPAIR_ONLY=${{ github.event.inputs.mode == 'repair' && '1' || '0' }} \
+            -e INSPECT_ONLY=${{ github.event.inputs.mode == 'inspect' && '1' || '0' }} \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             "${{ steps.img.outputs.image }}"
           sleep 30
@@ -132,8 +146,10 @@ jobs:
             esac
           done
 
-          echo "=== repair log ==="
+          echo "=== mode log ==="
           docker exec repair sh -c 'tail -80 /run/shm/installstate/install.log' 2>/dev/null || true
+          echo "=== inspect report (when present) ==="
+          docker exec repair sh -c 'cat /run/shm/installstate/inspect.log' 2>/dev/null || echo "(no inspect.log)"
           docker stop -t 120 repair || true
           docker rm -f repair || true
 

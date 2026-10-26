@@ -352,6 +352,88 @@ write_setup_markers() {
   return 1
 }
 
+# Inspect mode: report what is actually on the disk, change nothing.
+#
+# This exists because repair reported success - it wrote
+# /private/var/db/.AppleSetupDone and verified the file - and the disk still booted
+# to the country picker. Either the marker is not sufficient on macOS 14, or the
+# volume the marker was written to is not the volume that boots. Only an
+# inspection of the disk can tell those apart, and guessing has already cost
+# several runs.
+#
+# It lists, for the mounted system volume:
+#   - the marker files and their timestamps
+#   - the local user database, which is what makes Setup Assistant believe an
+#     account already exists
+#   - the Setup Assistant preference files, system-wide and per user
+#   - which volume was actually mounted and at what path
+if [ -e "$STATE_DIR/inspect" ]; then
+  INSPECT_VOL=""
+  count=0
+  while (( count < 60 )); do
+    if [ -f "$TARGET_VOLUME/System/Library/CoreServices/SystemVersion.plist" ]; then
+      INSPECT_VOL="$TARGET_VOLUME"
+      break
+    fi
+    count=$((count + 1))
+    sleep 2
+  done
+
+  {
+    echo "[inspect] ===== what is mounted ====="
+    /bin/df -h 2>/dev/null || :
+    echo
+    echo "[inspect] ===== candidate volume: ${INSPECT_VOL:-<none>} ====="
+
+    if [ -n "$INSPECT_VOL" ]; then
+      echo "[inspect] --- system version ---"
+      cat "$INSPECT_VOL/System/Library/CoreServices/SystemVersion.plist" 2>/dev/null | \
+        /usr/bin/grep -A1 -E 'ProductVersion|ProductBuildVersion' || :
+
+      echo
+      echo "[inspect] --- Setup Assistant markers ---"
+      for f in "$INSPECT_VOL/private/var/db/.AppleSetupDone" \
+               "$INSPECT_VOL/Library/User Template/English.lproj/.skipbuddy" \
+               "$INSPECT_VOL/Library/User Template/Non_localized/Library/Preferences/com.apple.SetupAssistant.plist"; do
+        if [ -e "$f" ]; then
+          /bin/ls -la "$f"
+        else
+          echo "MISSING: $f"
+        fi
+      done
+
+      echo
+      echo "[inspect] --- local users (dslocal) ---"
+      /bin/ls -la "$INSPECT_VOL/private/var/db/dslocal/nodes/Default/users" 2>/dev/null || echo "no users directory"
+
+      echo
+      echo "[inspect] --- /Users ---"
+      /bin/ls -la "$INSPECT_VOL/Users" 2>/dev/null || :
+
+      echo
+      echo "[inspect] --- admin group ---"
+      /bin/ls -la "$INSPECT_VOL/private/var/db/dslocal/nodes/Default/groups/admin.plist" 2>/dev/null || echo "no admin.plist"
+
+      echo
+      echo "[inspect] --- firstboot log if any ---"
+      /bin/cat "$INSPECT_VOL/var/log/macos-unattended-firstboot.log" 2>/dev/null | /usr/bin/tail -40 || echo "no firstboot log"
+
+      echo
+      echo "[inspect] --- staged bootstrap payload ---"
+      /bin/ls -laR "$INSPECT_VOL/Library/Application Support/macos-unattended" 2>/dev/null | /usr/bin/head -20 || echo "no staged payload"
+
+      echo
+      echo "[inspect] --- LaunchDaemons of ours ---"
+      /bin/ls -la "$INSPECT_VOL/Library/LaunchDaemons" 2>/dev/null | /usr/bin/grep -i dockur || echo "our daemon is gone (ran already)"
+    fi
+    echo "[inspect] ===== end ====="
+  } >> "$STATE_DIR/inspect.log" 2>&1 || :
+
+  : > "$BOOTSTRAP_DONE"
+  /sbin/shutdown -h now 2>/dev/null || :
+  while :; do sleep 60; done
+fi
+
 # Repair is OPT-IN only, never automatic.
 #
 # The signal is a "repair" sentinel in the 9p state share, written by image.sh
