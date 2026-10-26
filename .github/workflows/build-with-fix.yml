@@ -104,7 +104,7 @@ jobs:
     needs: build
     if: github.event.inputs.run_bake == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
@@ -177,12 +177,17 @@ jobs:
       # stalled screen says more than another size reading ever did.
       - name: wait for the install to finish
         id: wait
-        timeout-minutes: 75
+        timeout-minutes: 100
         run: |
           set -eux
           chmod +x scripts/wait_for_bootstrap.sh
-          bash scripts/wait_for_bootstrap.sh macbake 3600 "$GITHUB_WORKSPACE/waitstate" \
-            "$GITHUB_WORKSPACE/storage"
+          # stage 1: 40 min for bootstrap.done; stage 2: 50 min for the guest to
+          # finish installing by itself. Neither number is a guess about the
+          # total: bootstrap.done arrives around 15 minutes in, and the screen at
+          # that moment says "About 29 minutes remaining".
+          bash scripts/wait_for_bootstrap.sh macbake \
+            "$GITHUB_WORKSPACE/storage" 2400 3000 \
+            "$GITHUB_WORKSPACE/waitstate"
         continue-on-error: true
 
       - name: keep the wait-stage screenshot

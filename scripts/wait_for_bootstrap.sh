@@ -1,104 +1,117 @@
 #!/usr/bin/env bash
-# Wait for the installer to say it finished, then photograph the guest.
+# Wait for the whole macOS install, in two stages, and photograph it throughout.
 #
-# WHY THIS REPLACES THE du POLLING. du over the storage tree is not a completion
-# signal - it is noise. Measured over one run it went
+# THE MISTAKE THIS FIXES. bootstrap.done was treated as "installed". It is not.
+# The screenshot taken the instant it appeared showed an Apple logo, a progress
+# bar at about 5%, and the line "About 29 minutes remaining...". So bootstrap.done
+# means:
 #
-#   765 -> 8065 -> 27306 -> 18555 -> 28159 -> 15637 -> 14891 MiB
+#   launch.sh: [ -e "$BOOTSTRAP_DONE" ] && { kill -USR1 "$STARTOSINSTALL_PID"; break; }
 #
-# on a disk that was never reinstalled (dockur logged "Downloading macOS" once
-# and never rebuilt the image). An APFS install writes and deletes temporary
-# files, so "size stopped changing for N polls" measures the gap between two
-# temporary files, not progress. Earlier runs that looked settled at 27306 MiB
-# simply happened to stop between two such files.
+# i.e. "the bootstrap packages are in place, release startosinstall's reboot
+# delay". macOS then reboots INSIDE the guest and spends another half hour
+# writing the system. Stopping the container at that moment is what truncated
+# every run - the disk went from 28563 MiB at bootstrap.done down to 18340 MiB by
+# the time it was booted, because the container was killed mid-install.
 #
-# The only honest signal is the marker the guest writes:
+# So:
+#   stage 1  wait for bootstrap.done            (the guest's own marker)
+#   stage 2  keep waiting, sampling the screen, because the only progress
+#            indicator after that is the guest's own UI - "About N minutes
+#            remaining" while writing, then a desktop when done
 #
-#   install/recovery/launch.sh:
-#     [ -e "$BOOTSTRAP_DONE" ]   && { kill -USR1 "$STARTOSINSTALL_PID"; break; }
-#     [ -e "$BOOTSTRAP_FAILED" ] && fail "bootstrap installation failed"
+# The container is never stopped here. Stage 2 ends when the screen stops looking
+# like an installer, or when the deadline passes.
 #
-# bootstrap.done is what releases startosinstall's --rebootdelay, so its
-# appearance is both "the guest finished its part" and "a reboot is coming".
-# bootstrap.failed means it gave up and the log beside it says why.
-#
-# usage: wait_for_bootstrap.sh <container> <timeout-seconds> <shot-prefix>
+# usage: wait_for_bootstrap.sh <container> <storage> <stage1-secs> <stage2-secs> <shot-prefix>
 set -uo pipefail
 
 NAME="${1:?container}"
-TIMEOUT="${2:-1800}"
-PREFIX="${3:-/tmp/wait}"
-STORAGE_DIR="${4:-}"
+STORAGE="${2:?storage dir}"
+STAGE1="${3:-1800}"
+STAGE2="${4:-2700}"
+PREFIX="${5:-/tmp/wait}"
 STATE=/run/shm/installstate
 
-echo "=== waiting for $STATE/bootstrap.done (timeout ${TIMEOUT}s) ==="
-start=$(date +%s)
-result=timeout
-
-while :; do
-  now=$(date +%s)
-  elapsed=$((now - start))
-  if [ "$elapsed" -ge "$TIMEOUT" ]; then
-    echo "TIMEOUT after ${elapsed}s"
-    result=timeout
-    break
-  fi
-
-  # One docker exec per poll, asking about both markers at once so the per-poll
-  # cost stays low.
-  state=$(docker exec "$NAME" sh -c "
+probe() {
+  docker exec "$NAME" sh -c "
     d=$STATE
-    [ -e \$d/bootstrap.done ]   && echo DONE   && exit 0
-    [ -e \$d/bootstrap.failed ] && echo FAILED && exit 0
-    [ -e \$d/bootstrap.ready ]  && echo READY  && exit 0
+    [ -e \$d/bootstrap.done ]   && { echo DONE;   exit 0; }
+    [ -e \$d/bootstrap.failed ] && { echo FAILED; exit 0; }
+    [ -e \$d/bootstrap.ready ]  && { echo READY;  exit 0; }
     echo NOTSTARTED
-  " 2>/dev/null) || state=NOCONTAINER
+  " 2>/dev/null || echo NOCONTAINER
+}
 
-  # Storage path is passed in so the heartbeat stays honest about where the disk is.
-  used=$(du -sm "${STORAGE_DIR:-/nonexistent}" 2>/dev/null | cut -f1 || echo 0)
-  echo "[${elapsed}s] bootstrap=${state} storage=${used}MiB"
+shot() {
+  local out="$1"
+  docker cp scripts/shotsock.py "$NAME":/tmp/shotsock.py >/dev/null 2>&1 || return 1
+  docker exec "$NAME" python3 /tmp/shotsock.py /run/shm/monitor.sock "/tmp/$out.ppm" >/dev/null 2>&1 || return 1
+  docker cp "$NAME:/tmp/$out.ppm" "./$out.ppm" >/dev/null 2>&1 || return 1
+  python3 scripts/ppm2png.py "./$out.ppm" "./$out.png" 2>/dev/null || true
+  [ -s "./$out.png" ]
+}
 
-  case "$state" in
-    DONE)
-      echo "BOOTSTRAP DONE after ${elapsed}s"
-      result=done
-      break
-      ;;
-    FAILED)
-      echo "BOOTSTRAP FAILED after ${elapsed}s - guest log follows"
-      docker exec "$NAME" sh -c "cat $STATE/install.log 2>/dev/null | tail -40" || true
-      docker exec "$NAME" sh -c "cat $STATE/packages.log 2>/dev/null | tail -20" || true
-      result=failed
-      break
-      ;;
-    NOCONTAINER)
-      echo "container gone after ${elapsed}s"
-      result=nocontainer
-      break
-      ;;
+# ---------------------------------------------------------------------------
+# Stage 1: the guest's own marker.
+# ---------------------------------------------------------------------------
+echo "=== stage 1: waiting for $STATE/bootstrap.done (timeout ${STAGE1}s) ==="
+start=$(date +%s)
+stage1=timeout
+while :; do
+  elapsed=$(( $(date +%s) - start ))
+  [ "$elapsed" -ge "$STAGE1" ] && { echo "stage 1 TIMEOUT after ${elapsed}s"; break; }
+
+  st=$(probe)
+  used=$(du -sm "$STORAGE" 2>/dev/null | cut -f1 || echo 0)
+  echo "[s1 ${elapsed}s] bootstrap=${st} storage=${used}MiB"
+
+  case "$st" in
+    DONE)   echo "STAGE 1 DONE after ${elapsed}s"; stage1=done; break ;;
+    FAILED) echo "STAGE 1 FAILED after ${elapsed}s"
+            docker exec "$NAME" sh -c "tail -40 $STATE/install.log 2>/dev/null" || true
+            stage1=failed; break ;;
+    NOCONTAINER) echo "container gone after ${elapsed}s"; break ;;
   esac
-
   sleep 30
 done
 
-# Whatever happened, a picture now says more than another number. Taken while
-# the container is still alive - the earlier failures came from photographing a
-# stopped container.
-echo "=== screenshot before returning (result: $result) ==="
-if docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
-  docker cp scripts/shotsock.py "$NAME":/tmp/shotsock.py >/dev/null 2>&1 || true
-  docker exec "$NAME" python3 /tmp/shotsock.py /run/shm/monitor.sock "/tmp/${PREFIX##*/}.ppm" >/dev/null 2>&1 || echo "screendump failed"
-  docker cp "$NAME:/tmp/${PREFIX##*/}.ppm" "${PREFIX}.ppm" >/dev/null 2>&1 || echo "copy failed"
-  if [ -s "${PREFIX}.ppm" ]; then
-    python3 scripts/ppm2png.py "${PREFIX}.ppm" "${PREFIX}.png" || true
-  fi
-else
-  echo "container not running - no screenshot"
+# ---------------------------------------------------------------------------
+# Stage 2: macOS reboots inside the guest and installs for another ~30 minutes.
+# Nothing on the host reports this, so sample the screen.
+# ---------------------------------------------------------------------------
+if [ "$stage1" = "done" ]; then
+  echo "=== stage 2: $(( STAGE2 / 60 )) minutes of the guest finishing its own install ==="
+  start=$(date +%s)
+  round=0
+  while :; do
+    elapsed=$(( $(date +%s) - start ))
+    [ "$elapsed" -ge "$STAGE2" ] && { echo "stage 2 TIMEOUT after ${elapsed}s"; break; }
+
+    round=$((round + 1))
+    used=$(du -sm "$STORAGE" 2>/dev/null | cut -f1 || echo 0)
+    echo "[s2 ${elapsed}s] round ${round} storage=${used}MiB"
+
+    if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
+      echo "container exited during stage 2"
+      docker logs --tail 40 "$NAME" || true
+      break
+    fi
+
+    if shot "s2-${round}"; then
+      # ppm2png prints "distinct=N dominant=P%". An installer screen is nearly
+      # monochrome (logo and a bar on black); a desktop has far more colours.
+      info=$(python3 scripts/ppm2png.py "./s2-${round}.ppm" "./s2-${round}.png" 2>/dev/null | head -1 || true)
+      echo "  screen: ${info:-unreadable}"
+    else
+      echo "  screenshot failed this round"
+    fi
+
+    sleep 120
+  done
+  echo "=== stage 2 finished; final look ==="
+  shot "final" || echo "final screenshot failed"
 fi
 
-echo "RESULT=$result"
-case "$result" in
-  done) exit 0 ;;
-  failed) exit 2 ;;
-  *) exit 1 ;;
-esac
+echo "RESULT stage1=${stage1}"
+[ "$stage1" = "done" ] || exit 1
