@@ -159,15 +159,18 @@ install_bootstrap() {
 
   echo "[log] prepare phase completed; installing unattended bootstrap"
 
-  if ! /usr/sbin/installer \
-      -pkg "$SETUP_PACKAGE" \
-      -target "$TARGET_VOLUME" \
-      -verboseR; then
-    echo "[log] ERROR: failed to install prebuilt Setup Assistant package"
-    return 1
-  fi
-
-  echo "[log] prebuilt Setup Assistant package installed successfully"
+  # Do NOT install skipsetup.pkg here any more.
+  #
+  # This used to run at the end of the prepare phase, against $TARGET_VOLUME, and
+  # it reported success - but the marker it writes
+  # (/private/var/db/.AppleSetupDone) does not survive macOS's own second stage,
+  # which rewrites the system volume. That is why the finished golden disk booted
+  # to "Select Your Country or Region" instead of skipping Setup Assistant.
+  #
+  # The package is now handed to startosinstall via --installpackage so Apple's
+  # installer applies it once the system exists. Installing it twice would only
+  # hide which mechanism actually worked.
+  echo "[log] Setup Assistant package deferred to startosinstall --installpackage"
 
   if ! /bin/mkdir -p "$support_dir" "$daemon_dir"; then
     echo "[log] ERROR: failed to create first-boot staging directories"
@@ -312,6 +315,21 @@ printf '%s\n' "$USAGE" | /usr/bin/grep -q -- '--rebootdelay' ||
 printf '%s\n' "$USAGE" | /usr/bin/grep -q -- '--pidtosignal' ||
   fail "startosinstall does not support --pidtosignal"
 
+# --installpackage is what makes the Setup Assistant suppression survive.
+#
+# The original design installed skipsetup.pkg from the bootstrap helper, at the
+# end of startosinstall's prepare phase, while the target volume was mounted.
+# That is too early: macOS rewrites the system volume during its own second
+# stage, which discards /private/var/db/.AppleSetupDone. The result is exactly
+# what the golden disk showed - a fully bootable macOS sitting on
+# "Select Your Country or Region" because Setup Assistant had no reason to skip.
+#
+# --installpackage is the supported way to hand Apple's installer a package and
+# have it applied after the system is in place, so the marker it writes is the
+# one the first real boot sees.
+printf '%s\n' "$USAGE" | /usr/bin/grep -q -- '--installpackage' ||
+  fail "startosinstall does not support --installpackage"
+
 echo "[log] unattended bootstrap preflight passed"
 
 TARGET_DISK=""
@@ -375,6 +393,19 @@ ARGS=(
   --rebootdelay 300
   --pidtosignal "$BOOTSTRAPPER_PID"
 )
+
+# Hand Apple's installer the Setup Assistant suppression package so it is applied
+# after the system volume exists, not before. See the note at the --installpackage
+# capability check above for why installing it from the prepare phase does not
+# survive.
+if [ -n "${SETUP_PACKAGE:-}" ] && [ -s "${SETUP_PACKAGE:-}" ]; then
+  ARGS+=( --installpackage "$SETUP_PACKAGE" )
+  echo "[log] queued $SETUP_PACKAGE for post-install application"
+fi
+
+# The account package still has to run on first boot, because creating a user
+# requires the installed system's own tooling. It is staged and driven by the
+# firstboot LaunchDaemon exactly as before.
 
 echo "[log] starting online macOS installation on $TARGET_VOLUME"
 echo "[log] bootstrap will be installed directly after startosinstall prepare phase"
