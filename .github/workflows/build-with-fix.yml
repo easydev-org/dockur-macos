@@ -283,7 +283,23 @@ jobs:
       # That growth is the evidence stage 2 ran - the container's own opinion does
       # not matter, because hasData() judges by the first 100 KiB and may decide to
       # reinstall.
+      # Read the disk the wait stage just produced, before doing anything else
+      # with it. This is the question that decides the whole approach: did stage 1
+      # write a real macOS system, or only Apple's recovery?
+      #
+      # Everything else is skipped for this run. resume was disabled because it
+      # provably does nothing - the disk sat at 27306 MiB for 55 minutes with
+      # bootstrap.ready present and bootstrap.done absent - and boot was disabled
+      # because it would only photograph the same empty OpenCore picker again.
+      - name: what is actually on the disk
+        run: |
+          set -eux
+          sudo apt-get install -y -qq gdisk || true
+          chmod +x scripts/inspect-installed-disk.sh
+          sudo bash scripts/inspect-installed-disk.sh             "$GITHUB_WORKSPACE/storage/14/data.img"
+
       - name: resume the install (the reboot startosinstall waits for)
+        if: false    # disabled: resume provably does nothing (disk sat at 27306 MiB for 55 min)
         id: resume
         env:
           POLL: "30"
@@ -353,6 +369,7 @@ jobs:
           docker stop -t 300 macstage2 || true
           docker rm -f macstage2 || true
       - name: boot the golden disk directly and look at the desktop
+        if: false    # disabled: resume provably does nothing (disk sat at 27306 MiB for 55 min)
         id: desktop
         run: |
           set -eux
