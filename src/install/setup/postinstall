@@ -47,6 +47,20 @@ fail() {
 
 log "postinstall started (target=$TARGET)"
 
+# Record exactly where the markers land. --installpackage may hand this script
+# "/" (the recovery environment) instead of the target volume, and writing
+# .AppleSetupDone into recovery memory would look like success while changing
+# nothing - which is a plausible explanation for the golden disk still greeting
+# Setup Assistant. The log is mirrored to the host through the state share, so
+# the next run says which case it is instead of leaving it to guesswork.
+if mount_state_share; then
+  {
+    printf '[setup-target] TARGET=%s\n' "$TARGET"
+    printf '[setup-target] PREFIX=%s\n' "${PREFIX:-<empty>}"
+    printf '[setup-target] marker would be %s/private/var/db/.AppleSetupDone\n' "${PREFIX:-}"
+  } >> "$STATE_DIR/packages.log" 2>/dev/null || :
+fi
+
 # The primary job of this package is to prevent Setup Assistant from launching.
 # Do that before optional preference generation so missing version metadata can
 # never leave an otherwise completed installation at the country picker.
