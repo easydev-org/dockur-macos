@@ -82,6 +82,15 @@ echo "using qemu: $QEMU"
 # binary looks for its BIOS/option ROMs in the build-time prefix.
 QEMU_SHARE="$(dirname "$QEMU")/share"
 
+# The extracted binary is linked against libraries the runner may not have - the
+# first attempt died on libcapstone.so.5. Any that were dropped beside it are put
+# on the loader path here; libraries the host already provides are left alone.
+QEMU_LIB="$(dirname "$QEMU")/lib"
+if [ -d "$QEMU_LIB" ]; then
+  LD_LIBRARY_PATH="$QEMU_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  export LD_LIBRARY_PATH
+fi
+
 "$QEMU" \
   -L "$QEMU_SHARE" \
   -nodefaults \

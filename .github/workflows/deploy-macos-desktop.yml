@@ -112,12 +112,35 @@ jobs:
           # copies qemu-system-x86_64 and /usr/share/qemu out of qemux/qemu-macos,
           # so the binary and its firmware are both already here. Measured: apt
           # spent 1154 seconds - nineteen minutes - fetching the same thing.
-          mkdir -p qemu
+          mkdir -p qemu qemu/lib
           docker cp assets:/usr/bin/qemu-system-x86_64 qemu/qemu-system-x86_64
           docker cp assets:/usr/share/qemu qemu/share
+
+          # The binary is dynamically linked against libraries the runner does not
+          # have; the first attempt at using it failed exactly there:
+          #   error while loading shared libraries: libcapstone.so.5
+          # Rather than guess which, ask the image for ldd output and copy every
+          # library it names. Then drop the non-system ones beside the binary and
+          # point LD_LIBRARY_PATH at them.
+          docker run --rm --entrypoint sh assets -c 'ldd /usr/bin/qemu-system-x86_64 2>/dev/null'             | awk '/=> \//{print $3} /^	\//{print $1}' | sort -u > qemu/ldd.txt || true
+          echo "=== libraries qemu needs ==="
+          cat qemu/ldd.txt
+
+          while read -r lib; do
+            [ -n "$lib" ] || continue
+            base=$(basename "$lib")
+            # Skip anything the runner already has: copying a mismatched glibc over
+            # the host one would break far more than it fixes.
+            [ -e "/lib/x86_64-linux-gnu/$base" ] && continue
+            [ -e "/usr/lib/x86_64-linux-gnu/$base" ] && continue
+            docker cp "assets:$lib" "qemu/lib/$base" 2>/dev/null || true
+          done < qemu/ldd.txt
+
           docker rm -f assets >/dev/null || true
           chmod +x qemu/qemu-system-x86_64
-          ./qemu/qemu-system-x86_64 --version | head -1
+          echo "=== copied libraries ==="
+          ls -la qemu/lib/ | head -20
+          LD_LIBRARY_PATH="$PWD/qemu/lib" ./qemu/qemu-system-x86_64 --version | head -1
           cat oc-version 2>/dev/null || true
           ls -la vm/
 
