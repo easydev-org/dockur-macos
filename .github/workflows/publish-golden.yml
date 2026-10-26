@@ -1,0 +1,118 @@
+name: publish-golden
+
+# Put a baked macOS disk into the container registry, where it can be pulled at
+# CDN speed instead of being handed around as an Actions artifact.
+#
+# WHY THIS EXISTS. Moving an 11.8 GiB artifact between workflows measured
+# between 106 seconds and "not finished after 1085 seconds", depending on the
+# run - the download goes through a redirect to Azure blob storage and the rate
+# is not something a workflow can influence. The same file as an OCI artifact in
+# ghcr is fetched through a CDN, and - more to the point - that is where
+# easysandbox-macos already expects to get its golden disk from, so the publish
+# step is not extra machinery, it is the production path.
+#
+# oras is used rather than docker push because the payload is a bare qcow2, not
+# a container image. oras stores arbitrary files as OCI artifacts without
+# inventing a Dockerfile for them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: "Run id holding the macos-golden artifact"
+        required: true
+        default: "40304160694"
+      tag:
+        description: "Tag to publish under"
+        required: false
+        default: "14"
+      repository:
+        description: "Target repository in ghcr"
+        required: false
+        default: "ghcr.io/easydev-org/golden-macos"
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils
+          curl -sSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin oras
+          oras version
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h / | tail -1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-golden
+          path: disk
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.artifact_run }}
+
+      - name: prepare the blob
+        run: |
+          set -eux
+          f=$(find disk -name '*.qcow2' | head -1)
+          [ -n "$f" ] || { echo "no qcow2 in the artifact"; ls -R disk | head; exit 1; }
+          qemu-img info "$f"
+          mv "$f" data.qcow2
+          ls -la data.qcow2
+          du -h data.qcow2
+
+          # A small manifest beside the disk: the consumer needs to know what it
+          # is pulling, and qemu-img's view is the useful part.
+          {
+            echo "source_run: ${{ github.event.inputs.artifact_run }}"
+            echo "git_sha: ${{ github.sha }}"
+            echo "built_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "--- qemu-img info ---"
+            qemu-img info data.qcow2
+          } > data.txt
+          cat data.txt
+
+      - name: push to ghcr
+        run: |
+          set -eux
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          REPO="${{ github.event.inputs.repository }}"
+          TAG="${{ github.event.inputs.tag }}"
+
+          # The disk is the artifact; the text file travels with it as a second
+          # layer so a consumer can inspect what it got without downloading 11 GiB.
+          oras push "$REPO:$TAG" \
+            --artifact-type application/vnd.easydev.golden-disk.v1+qcow2 \
+            --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            data.qcow2:application/vnd.easydev.qcow2 \
+            data.txt:text/plain
+
+          echo "=== pushed ==="
+          oras manifest fetch "$REPO:$TAG" | head -40
+
+      - name: verify it can be pulled
+        run: |
+          set -eux
+          REPO="${{ github.event.inputs.repository }}"
+          TAG="${{ github.event.inputs.tag }}"
+          mkdir -p pull && cd pull
+          oras pull "$REPO:$TAG"
+          ls -la
+          qemu-img info data.qcow2
