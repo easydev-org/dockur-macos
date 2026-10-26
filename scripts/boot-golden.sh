@@ -79,6 +79,7 @@ qemu-system-x86_64 \
   -display none \
   -vga vmware \
   -monitor "unix:$MONITOR,server=on,wait=off,nodelay=on" \
+  -qmp "unix:${MONITOR}.qmp,server=on,wait=off" \
   -serial mon:stdio \
   -device nec-usb-xhci,id=xhci \
   -device usb-kbd,bus=xhci.0 \

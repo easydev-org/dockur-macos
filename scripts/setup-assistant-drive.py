@@ -3,12 +3,21 @@
 
     setup-assistant-drive.py <monitor.sock> <frame-prefix>
 
-WHY CLICKS AND NOT KEYS. The first version sent sendkey ret/tab and typed the
-country name. Nineteen frames later the screen differed from the first by 27 KB
-out of 6.2 MB - the clock had moved, the country list had not. The captured frame
-explains it: the list holds keyboard focus (blue focus ring) but does not act on
-typed letters, and Continue stays grey until a row is actually chosen, which on
-this pane means a click. So this clicks.
+WHY QMP AND NOT HMP. Two earlier attempts used QEMU's HMP monitor and neither
+moved the guest:
+
+  sendkey ret/tab for nineteen frames     screen differed by 27 KB out of 6.2 MB
+                                          - the clock advanced, the list did not
+  mouse_move + mouse_button, 64 clicks    all 64 frames byte-identical, pointer
+                                          still in the top-left corner
+
+The second failure is the informative one. HMP's mouse_move carries relative
+deltas while the guest has a usb-tablet, an absolute device, so the deltas never
+produced a position. QMP's input-send-event takes abs axis values with explicit
+button state, which is what an absolute pointer needs, so this speaks QMP.
+
+The first click after boot is also treated as a pointer test: if the frame does
+not change at all, the driver reports it rather than looping on dead input.
 
 WHY DRIVING AT ALL. There is no marker-based shortcut to find. dockur's README
 says only dockur/windows has automatic installation; OSX-KVM (23.8k stars) lists
@@ -30,53 +39,28 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 
+import qmp as qmpmod
+
+
 class Monitor:
-    def __init__(self, path):
-        self.path = path
-        self.sock = None
-        self.connect()
+    """Thin wrapper so the rest of the script reads the same as before, but every
+    event goes through QMP's input-send-event rather than HMP."""
 
-    def connect(self):
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.settimeout(20)
-        s.connect(self.path)
-        time.sleep(0.4)
-        try:
-            s.recv(65536)
-        except socket.timeout:
-            pass
-        self.sock = s
-        return s
+    def __init__(self, qmp_socket):
+        self.q = qmpmod.QMP(qmp_socket)
 
-    def cmd(self, line, wait=0.25):
-        if self.sock is None:
-            self.connect()
-        self.sock.sendall((line + "\n").encode())
-        time.sleep(wait)
-        try:
-            self.sock.recv(65536)
-        except socket.timeout:
-            pass
+    def shot(self, path):
+        reply = self.q.execute("screendump", filename=path)
+        time.sleep(1.5)
+        if "error" in reply:
+            raise RuntimeError("screendump failed: %s" % reply["error"])
+        return path if os.path.exists(path) else None
+
+    def click(self, x, y):
+        qmpmod.click(self.q, x, y)
 
     def close(self):
-        if self.sock:
-            try:
-                self.sock.close()
-            except OSError:
-                pass
-            self.sock = None
-
-
-def shot(mon, path):
-    ppm = path + ".ppm"
-    mon.cmd("screendump " + ppm, wait=2.0)
-    return ppm if os.path.exists(ppm) else None
-
-
-def click(mon, x, y, wait=0.5):
-    mon.cmd("mouse_move %d %d" % (x, y), wait=0.3)
-    mon.cmd("mouse_button 1", wait=0.15)
-    mon.cmd("mouse_button 0", wait=wait)
+        self.q.close()
 
 
 def signature(mon, path):
@@ -85,7 +69,7 @@ def signature(mon, path):
     ppm2png prints 'distinct=N dominant=P%'. Those two numbers are enough to tell
     'the pane changed' from 'nothing happened' without interpreting the image.
     """
-    ppm = shot(mon, path)
+    ppm = mon.shot(path)
     if not ppm:
         return None
     try:
@@ -121,7 +105,8 @@ def main():
         with open(log_path, "a") as fh:
             fh.write(line + "\n")
 
-    mon = Monitor(mon_path)
+    # boot-golden.sh opens QMP beside the HMP socket, with .qmp appended.
+    mon = Monitor(mon_path + ".qmp")
     log("monitor connected at " + mon_path)
 
     # The guest runs at 1920x1080 because OpenCore's config sets that resolution.

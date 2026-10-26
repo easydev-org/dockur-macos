@@ -152,8 +152,22 @@ jobs:
           BOOT=$!
           sleep 60
 
-          chmod +x scripts/setup-assistant-drive.py
-          # The monitor socket is owned by root because qemu runs under sudo.
+          chmod x scripts/setup-assistant-drive.py scripts/qmp.py
+
+          # Prove the pointer actually responds before trusting the driver with
+          # twenty minutes of clicks. The previous two attempts both looked like
+          # they ran and both changed nothing, so this prints the guest state and
+          # the display geometry first, then moves the pointer once and takes a
+          # frame - a moved cursor is visible in the image and in the signature.
+          echo "=== QMP reachable ==="
+          sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp status || true
+          sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp size || true
+          sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp shot /tmp/qmp-a.ppm || true
+          sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp click 960 540 || true
+          sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp shot /tmp/qmp-b.ppm || true
+          sudo chown "$(id -u):$(id -g)" /tmp/qmp-a.ppm /tmp/qmp-b.ppm 2>/dev/null || true
+          cmp -s /tmp/qmp-a.ppm /tmp/qmp-b.ppm && echo "POINTER DID NOTHING" || echo "POINTER MOVED"
+
           sudo python3 scripts/setup-assistant-drive.py /tmp/monitor.sock "$GITHUB_WORKSPACE/frame" || true
 
           echo "=== frames collected ==="
