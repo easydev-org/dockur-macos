@@ -138,4 +138,9 @@ def main():
         q.close()
 
 
-main()
+if __name__ == "__main__":
+    # Guarded so this file can also be imported as a module by
+    # setup-assistant-drive.py. Without the guard, importing it ran main(),
+    # which tried to open a socket from argv that the importer did not supply -
+    # the driver died at the import line and the run produced no frames at all.
+    main()
