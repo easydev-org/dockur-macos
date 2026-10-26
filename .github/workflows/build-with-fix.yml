@@ -158,139 +158,44 @@ jobs:
       # du over the mount climbs while the installer writes and stops when it
       # finishes. So: require it to have grown past the download baseline, then
       # require it to be unchanged for STABLE polls in a row.
+      # Wait on the marker the guest itself writes, not on du.
+      #
+      # du over the storage tree is noise, measured: one run went
+      # 765 -> 8065 -> 27306 -> 18555 -> 28159 -> 15637 -> 14891 MiB without the
+      # container ever reinstalling anything. An APFS install writes and deletes
+      # temporary files, so "unchanged for N polls" only measures the gap between
+      # two of them. The runs that looked settled at 27306 MiB were just lucky.
+      #
+      # install/recovery/launch.sh gates everything on bootstrap.done:
+      #
+      #   [ -e "$BOOTSTRAP_DONE" ]   && { kill -USR1 "$STARTOSINSTALL_PID"; break; }
+      #   [ -e "$BOOTSTRAP_FAILED" ] && fail "bootstrap installation failed"
+      #
+      # so that marker is both "the guest finished" and "a reboot is coming".
+      #
+      # 30 minutes, and a screenshot before returning either way: a picture of a
+      # stalled screen says more than another size reading ever did.
       - name: wait for the install to finish
         id: wait
-        env:
-          POLL: "30"
-          # The install is TWO phases, and the disk shows it:
-          #
-          #   ~30s   765 MiB   downloading the recovery image
-          #   ~330s  5683 MiB  phase 1 (startosinstall prepare) writing
-          #   ~930s 27306 MiB  phase 1 looks finished
-          #  ~1230s 28499 MiB  then launch.sh prints "waiting for reboot" and
-          #                     sits in a permanent sleep loop
-          #
-          # startosinstall was launched with --rebootdelay 300, so a reboot comes
-          # about five minutes after the prepare phase and macOS's own installer
-          # keeps writing afterwards. Treating the first quiet spell as "finished"
-          # is precisely what produced a disk holding only Apple's recovery.
-          #
-          # So require two settled windows separated by renewed growth: one quiet
-          # stretch is a phase boundary, two means the disk really stopped.
-          # ONE phase here, not two. This container runs startosinstall's
-          # prepare stage and then launch.sh sleeps waiting for a reboot that
-          # dockur never sends - power.sh only defines finish(), which shuts
-          # down. Stage 2 cannot start inside this container no matter how long
-          # we watch, so waiting for two phases here just burns the ceiling.
-          # Stage 2 is provoked and measured by the resume step below.
-          STABLE_POLLS: "10"      # 5 minutes of no growth = prepare done
-          PHASES: "1"
-          MAX_POLLS: "120"        # ~60 minutes is ample for the prepare stage
+        timeout-minutes: 45
         run: |
           set -eux
-          last=-1
-          stable=0
-          started=0
-          phase=0
-          peak=0
-          # Size at which the current phase settled. The next phase may only be
-          # counted once the disk has grown past this again. Without it the loop
-          # counted the same quiet stretch twice - both phases reported at
-          # 27306 MiB without the disk moving - which is exactly how a
-          # stage-1-only disk would slip through.
-          settled_at=0
-          for i in $(seq 1 "$MAX_POLLS"); do
-            sleep "$POLL"
-            used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
-            echo "[$((i*POLL))s] storage_used=${used}MiB stable=${stable} phase=${phase}/${PHASES}"
+          chmod +x scripts/wait_for_bootstrap.sh
+          bash scripts/wait_for_bootstrap.sh macbake 1800 "$GITHUB_WORKSPACE/waitstate" \
+            "$GITHUB_WORKSPACE/storage"
+        continue-on-error: true
 
-            # Every fifth poll, read the installer bootstrap state from inside
-            # the container. launch.sh only reboots when bootstrap.done appears -
-            # that marker is what releases startosinstall's --rebootdelay 300 via
-            # USR1 - so its absence is why nothing ever restarts and the disk
-            # stops for good. The guest writes its own log beside the markers.
-            if [ $((i % 5)) -eq 0 ]; then
-              bash scripts/installstate-probe.sh macbake || true
-            fi
+      - name: keep the wait-stage screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wait-screenshot
+          path: |
+            waitstate.png
+            waitstate.ppm
+          if-no-files-found: warn
+          retention-days: 7
 
-            if [ "$used" -lt 2000 ]; then
-              # still downloading the recovery image, or not started yet
-              :
-            else
-              started=1
-            fi
-
-            if [ "$used" -gt "$peak" ]; then peak=$used; fi
-
-            if [ "$used" = "$last" ]; then
-              stable=$((stable + 1))
-            else
-              stable=0
-            fi
-            last=$used
-
-            # A phase can only settle if the disk grew since the last settle. A
-            # second quiet window at the same size is the same phase observed
-            # twice, not a new one.
-            if [ "$started" = "1" ] && [ "$stable" -ge "$STABLE_POLLS" ] && [ "$used" -gt "$settled_at" ]; then
-              phase=$((phase + 1))
-              settled_at=$used
-              echo "PHASE $phase settled at ${used}MiB after $((i*POLL))s"
-              if [ "$phase" -ge "$PHASES" ]; then
-                echo "INSTALL SETTLED after $phase phases at ${used}MiB (peak ${peak}MiB)"
-                break
-              fi
-              # Require a fresh quiet window before counting again.
-              stable=0
-            fi
-
-            if ! docker ps --format '{{.Names}}' | grep -qx macbake; then
-              echo "container exited"
-              docker logs --tail 120 macbake || true
-              break
-            fi
-          done
-
-          if [ "$started" = "0" ]; then
-            echo "::error::the installer never wrote more than 2000MiB - the unattended path did not run"
-            docker logs --tail 120 macbake || true
-            exit 1
-          fi
-          if [ "$phase" -lt "$PHASES" ]; then
-            echo "::warning::only $phase of $PHASES install phases settled - the disk may still be stage-1 recovery only"
-          fi
-
-          echo "=== unattended markers in the container log ==="
-          docker logs macbake 2>&1 | grep -Ei "preparing automated|patched startosinstall|startosinstall|bootstrap|erasing" | head -20 || echo none
-          echo "=== storage tree ==="
-          find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -printf "%10s %p\n" 2>/dev/null | sort -rn | head -10 || true
-      # Trigger macOS's SECOND install stage, then boot the disk and look at it.
-      #
-      # install/recovery/launch.sh ends with:
-      #
-      #   echo "[log] startosinstall completed its prepare phase; waiting for reboot"
-      #   while :; do sleep 60; done
-      #
-      # That is startosinstall's PREPARE phase, launched with --rebootdelay 300, so
-      # it expects a reboot to carry on. dockur never restarts the container by
-      # itself - power.sh only defines finish(), which shuts down - so nothing
-      # comes back to run stage 2 and the disk stops in a recovery-only state.
-      # The disk diagnosis is consistent with exactly that: 283 BaseSystem strings
-      # against 8 for Macintosh HD, on a GPT with one 65 GiB APFS container.
-      #
-      # Restarting the container IS the reboot being waited for: firmware boots the
-      # half-installed disk, macOS's installer resumes, and the disk grows again.
-      # That growth is the evidence stage 2 ran - the container's own opinion does
-      # not matter, because hasData() judges by the first 100 KiB and may decide to
-      # reinstall.
-      # Read the disk the wait stage just produced, before doing anything else
-      # with it. This is the question that decides the whole approach: did stage 1
-      # write a real macOS system, or only Apple's recovery?
-      #
-      # Everything else is skipped for this run. resume was disabled because it
-      # provably does nothing - the disk sat at 27306 MiB for 55 minutes with
-      # bootstrap.ready present and bootstrap.done absent - and boot was disabled
-      # because it would only photograph the same empty OpenCore picker again.
       - name: what is actually on the disk
         run: |
           set -eux
