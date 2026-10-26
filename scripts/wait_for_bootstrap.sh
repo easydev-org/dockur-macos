@@ -84,6 +84,7 @@ if [ "$stage1" = "done" ]; then
   echo "=== stage 2: $(( STAGE2 / 60 )) minutes of the guest finishing its own install ==="
   start=$(date +%s)
   round=0
+  desktop=no
   while :; do
     elapsed=$(( $(date +%s) - start ))
     [ "$elapsed" -ge "$STAGE2" ] && { echo "stage 2 TIMEOUT after ${elapsed}s"; break; }
@@ -99,18 +100,38 @@ if [ "$stage1" = "done" ]; then
     fi
 
     if shot "s2-${round}"; then
-      # ppm2png prints "distinct=N dominant=P%". An installer screen is nearly
-      # monochrome (logo and a bar on black); a desktop has far more colours.
-      info=$(python3 scripts/ppm2png.py "./s2-${round}.ppm" "./s2-${round}.png" 2>/dev/null | head -1 || true)
+      # ppm2png exits 0 and prints "PICTURE OK (desktop)" only when the frame has
+      # real content: enough distinct colours and no single colour dominating.
+      # An installer screen is a logo and a bar on black - 24 to 123 colours at
+      # 99.7% one colour - which it reports as NOT A DESKTOP.
+      #
+      # The transition was observed directly: rounds 1-8 were 99.7% black (the
+      # Apple logo and progress bar), round 9 switched to 1280x800 with macOS
+      # blues, round 10 jumped to 415 colours with a 63.2% light-grey background
+      # and 19.2% dark - the desktop. So "PICTURE OK" is the signal that the guest
+      # finished installing and came up, and there is nothing to gain by waiting
+      # out the remaining rounds once it appears.
+      info=$(python3 scripts/ppm2png.py "./s2-${round}.ppm" "./s2-${round}.png" 2>&1 | head -3 || true)
       echo "  screen: ${info:-unreadable}"
+      case "$info" in
+        *"PICTURE OK"*)
+          echo "DESKTOP REACHED at stage-2 round ${round} (${elapsed}s into stage 2)"
+          desktop=yes
+          break
+          ;;
+      esac
     else
       echo "  screenshot failed this round"
     fi
 
     sleep 120
   done
-  echo "=== stage 2 finished; final look ==="
-  shot "final" || echo "final screenshot failed"
+  if [ "$desktop" = "yes" ]; then
+    echo "=== stage 2 ended because the desktop appeared ==="
+  else
+    echo "=== stage 2 window elapsed without a desktop; final look ==="
+    shot "final" || echo "final screenshot failed"
+  fi
 fi
 
 echo "RESULT stage1=${stage1}"

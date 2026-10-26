@@ -476,8 +476,14 @@ jobs:
         with:
           name: macos-desktop
           path: |
+            s2-*.png
+            s2-*.ppm
+            final.png
+            final.ppm
             desktop*.png
             desktop*.ppm
+            waitstate.png
+            waitstate.ppm
             guestlogs/**
             guestlogs/*
           if-no-files-found: warn
