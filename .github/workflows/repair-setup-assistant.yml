@@ -1,0 +1,175 @@
+name: repair-setup-assistant
+
+# Make an already-baked macOS disk land on the desktop instead of
+# "Select Your Country or Region". No installer download, no reinstall.
+#
+# THE MECHANISM. Recovery writes to this disk's system volume on every normal
+# bake - that is how startosinstall installs macOS. And the marker Setup Assistant
+# reads is unambiguous: /private/var/db/.AppleSetupDone. Every earlier attempt
+# failed on timing or target rather than on the marker being wrong:
+#
+#   setup/postinstall, prepare phase    macOS rewrites the volume in stage 2
+#   skipsetup.pkg via --installpackage  lands wherever $3 points, not reliably
+#                                       the disk
+#   firstboot LaunchDaemon              runs after Setup Assistant already began
+#   dockur's unattended code            upstream README says only dockur/windows
+#                                       has automatic installation, and the macOS
+#                                       tree calls itself a "proof"
+#
+# So: boot the disk's own Recovery with REPAIR_ONLY=1. launch.sh sees the sentinel,
+# mounts the finished volume, writes .AppleSetupDone, .skipbuddy and the DidSee*
+# keys, shuts down - and never erases anything.
+#
+# Then boot the repaired disk normally and photograph it. A desktop with a menu
+# bar means done; Setup Assistant again means the marker is not the whole story.
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run:
+        description: "Run id holding macos-golden and macos-image-fixed"
+        required: true
+        default: "40304160694"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils qemu-system-x86
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h / | tail -1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-golden
+          path: disk
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.artifact_run }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-image-fixed
+          path: img
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.artifact_run }}
+
+      - name: unpack the disk
+        run: |
+          set -eux
+          mkdir -p storage/14
+          f=$(find disk -name '*.qcow2' | head -1)
+          [ -n "$f" ] || { echo "no disk in artifact"; ls -R disk | head; exit 1; }
+          qemu-img info "$f"
+          # dockur expects a raw image named data.img inside the version folder.
+          qemu-img convert -O raw "$f" storage/14/data.img
+          ls -la storage/14/
+          du -h storage/14/data.img
+
+      - name: load the launcher image
+        id: img
+        run: |
+          set -eux
+          docker load -i img/image.tar
+          IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+          echo "launcher image: $IMG"
+
+      # REPAIR_ONLY=1 makes image.sh drop a "repair" sentinel into the 9p state
+      # share. launch.sh then writes the markers and shuts down instead of
+      # erasing the disk. VERSION must match the directory the disk sits in.
+      - name: boot into recovery and write the markers
+        run: |
+          set -eux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          docker rm -f repair || true
+          docker run -d --name repair \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=N \
+            -e REPAIR_ONLY=1 \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            "${{ steps.img.outputs.image }}"
+          sleep 30
+          docker logs --tail 60 repair || true
+
+          # Wait for bootstrap.done, which repair mode writes after the markers land.
+          for i in $(seq 1 80); do
+            sleep 15
+            st=$(docker exec repair sh -c '
+              d=/run/shm/installstate
+              [ -e $d/bootstrap.done ]   && echo DONE   && exit 0
+              [ -e $d/bootstrap.failed ] && echo FAILED && exit 0
+              [ -e $d/repair ]           && echo REPAIR && exit 0
+              echo WAITING
+            ' 2>/dev/null || echo NOCONTAINER)
+            echo "[$((i*15))s] state=$st"
+            case "$st" in
+              DONE) echo "MARKERS WRITTEN"; break ;;
+              FAILED)
+                echo "::error::repair failed"
+                docker exec repair sh -c 'tail -60 /run/shm/installstate/install.log' || true
+                exit 1 ;;
+              NOCONTAINER) echo "container gone"; break ;;
+            esac
+          done
+
+          echo "=== repair log ==="
+          docker exec repair sh -c 'tail -80 /run/shm/installstate/install.log' 2>/dev/null || true
+          docker stop -t 120 repair || true
+          docker rm -f repair || true
+
+      # Boot the repaired disk normally. If Setup Assistant is suppressed the
+      # screen shows a menu bar and Dock; if not, it shows the country picker
+      # again, which is equally informative.
+      - name: boot the repaired disk and photograph it
+        run: |
+          set -eux
+          chmod +x scripts/boot-golden.sh
+          sudo -E bash scripts/boot-golden.sh \
+            "$GITHUB_WORKSPACE/storage/14" \
+            /tmp/repaired-monitor.sock 900 &
+          BOOT=$!
+          sleep 90
+
+          for r in $(seq 1 6); do
+            echo "=== round $r ==="
+            sudo python3 scripts/shotsock.py /tmp/repaired-monitor.sock "./repaired-$r.ppm" || echo "shot failed"
+            sudo chown "$(id -u):$(id -g)" "./repaired-$r.ppm" 2>/dev/null || true
+            if [ -s "./repaired-$r.ppm" ]; then
+              python3 scripts/ppm2png.py "./repaired-$r.ppm" "./repaired-$r.png" 2>&1 | sed -n '1p;$p' || true
+            fi
+            sleep 120
+          done
+
+          sudo pkill -9 -f "qemu-system-x86_64.*data.img" 2>/dev/null || true
+          wait "$BOOT" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: repaired-frames
+          path: |
+            repaired-*.png
+            repaired-*.ppm
+          if-no-files-found: warn
+          retention-days: 14
+

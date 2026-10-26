@@ -338,6 +338,24 @@ prepareInstallationState() {
     return 1
   fi
 
+  # Pass REPAIR_ONLY through to the guest.
+  #
+  # launch.sh runs inside Recovery and cannot see the container's environment, so
+  # the only channel is this 9p state share. A sentinel file is enough: with it,
+  # launch.sh writes the Setup Assistant markers onto the existing system and
+  # shuts down instead of erasing the disk and installing again.
+  #
+  # This is what makes repair possible without a 50-minute reinstall, and it is
+  # opt-in precisely so a normal bake cannot accidentally take this branch.
+  if enabled "${REPAIR_ONLY:-}"; then
+    if ! : > "$state/repair"; then
+      error "Failed to request repair mode."
+      return 1
+    fi
+    chmod 0644 "$state/repair"
+    info "Repair mode requested: the existing system will be kept and its Setup Assistant suppressed." && true
+  fi
+
   return 0
 }
 

@@ -279,6 +279,115 @@ mirror_log "$LOCAL_LOG" "$STATE_LOG" "$STATE_LOG_LIMIT" &
 
 echo "[log] installation state share mounted"
 
+# ---------------------------------------------------------------------------
+# Repair mode.
+#
+# When the disk already holds a completed macOS, do not install again - just
+# write the Setup Assistant markers onto the installed volume and stop. This is
+# the only mechanism that does not depend on timing:
+#
+#   prepare-phase install   gets overwritten when macOS rewrites the volume
+#   --installpackage        lands wherever $3 points, not reliably this disk
+#   firstboot LaunchDaemon  runs after Setup Assistant has already started
+#
+# Here recovery is writing to the finished volume directly, which is exactly what
+# startosinstall does successfully on this disk during a normal install. If
+# /System/Library/CoreServices/SystemVersion.plist exists, the system is there.
+#
+# Set REPAIR_ONLY=1 to force this, or let it happen automatically when a system is
+# found and nothing has been started yet.
+# ---------------------------------------------------------------------------
+
+write_setup_markers() {
+  local vol="$1"
+  local marker="$vol/private/var/db/.AppleSetupDone"
+
+  echo "[repair] writing markers onto $vol"
+
+  /bin/mkdir -p "$vol/private/var/db" || { echo "[repair] ERROR: mkdir failed"; return 1; }
+  /usr/bin/touch "$marker" || { echo "[repair] ERROR: touch failed"; return 1; }
+  /usr/sbin/chown 0:0 "$marker" 2>/dev/null || :
+  /bin/chmod 0644 "$marker" 2>/dev/null || :
+  echo "[repair] wrote $marker"
+
+  # The per-user and template buddies.
+  local skipbuddy="$vol/Library/User Template/English.lproj/.skipbuddy"
+  /bin/mkdir -p "${skipbuddy%/*}" 2>/dev/null || :
+  /usr/bin/touch "$skipbuddy" 2>/dev/null && echo "[repair] wrote $skipbuddy" || :
+
+  # DidSee* keys, which macOS 11+ also consults before showing the country picker.
+  local plist="$vol/Library/User Template/Non_localized/Library/Preferences/com.apple.SetupAssistant.plist"
+  /bin/mkdir -p "${plist%/*}" 2>/dev/null || :
+  local key
+  for key in DidSeeCloudSetup DidSeeSiriSetup DidSeeTrueToneSetup DidSeeDisplayTrueTone \
+             DidSeePrivacy DidSeeAccessibility DidSeeScreenTime DidSeeSetupAssistant \
+             DidSeeAppStore DidSeeTouchIDSetup DidSeeiCloudAnalyticsOptIn; do
+    /usr/bin/defaults write "$plist" "$key" -bool true 2>/dev/null || :
+  done
+  /usr/bin/defaults write "$plist" "LastSeenCloudProductVersion" -string "14.0" 2>/dev/null || :
+  /usr/bin/defaults write "$plist" "LastSeenBuddyBuildVersion" -string "23A344" 2>/dev/null || :
+  echo "[repair] wrote Setup Assistant preference keys"
+
+  # Same keys for every real account already on the volume, because that is the
+  # user Setup Assistant would greet.
+  local upref
+  for upref in "$vol"/Users/*/Library/Preferences; do
+    [ -d "$upref" ] || continue
+    case "$upref" in */Shared/*|*/Guest/*) continue ;; esac
+    for key in DidSeeCloudSetup DidSeeSiriSetup DidSeePrivacy DidSeeAccessibility \
+               DidSeeScreenTime DidSeeSetupAssistant DidSeeAppStore DidSeeiCloudAnalyticsOptIn; do
+      /usr/bin/defaults write "$upref/com.apple.SetupAssistant.plist" "$key" -bool true 2>/dev/null || :
+    done
+    /usr/bin/defaults write "$upref/com.apple.SetupAssistant.plist" "LastSeenCloudProductVersion" -string "14.0" 2>/dev/null || :
+    /usr/bin/touch "$upref/../.skipbuddy" 2>/dev/null || :
+    echo "[repair] wrote markers for $upref"
+  done
+
+  # Prove it landed rather than trusting the exit status.
+  if [ -e "$marker" ]; then
+    echo "[repair] VERIFIED: $marker exists"
+    return 0
+  fi
+  echo "[repair] ERROR: $marker still missing after writing"
+  return 1
+}
+
+# Repair is OPT-IN only, never automatic.
+#
+# The signal is a "repair" sentinel in the 9p state share, written by image.sh
+# when the container was started with REPAIR_ONLY=1. Environment variables cannot
+# reach here - this runs inside Recovery, a different boot entirely - so the
+# shared directory is the only channel.
+#
+# Opt-in matters: an automatic "a system is present, skip the install" test would
+# also fire on a freshly erased disk as soon as startosinstall stages its first
+# files, silently turning every future bake into a no-op.
+if [ -e "$STATE_DIR/repair" ]; then
+  REPAIR_VOL=""
+  count=0
+  while (( count < 60 )); do
+    if [ -f "$TARGET_VOLUME/System/Library/CoreServices/SystemVersion.plist" ]; then
+      REPAIR_VOL="$TARGET_VOLUME"
+      break
+    fi
+    count=$((count + 1))
+    sleep 2
+  done
+
+  if [ -z "$REPAIR_VOL" ]; then
+    fail "REPAIR_ONLY was requested but no complete system is on $TARGET_VOLUME"
+  fi
+
+  echo "[repair] a complete macOS is on $REPAIR_VOL - writing markers, not installing"
+  if write_setup_markers "$REPAIR_VOL"; then
+    : > "$BOOTSTRAP_DONE"
+    echo "[log] Setup Assistant markers written; no installation performed"
+    /sbin/shutdown -h now 2>/dev/null || :
+    while :; do sleep 60; done
+  fi
+  fail "failed to write Setup Assistant markers"
+fi
+
 if [ -e "$STARTED" ]; then
   echo "[log] installation was already started; refusing to erase the target disk again"
   exec /usr/libexec/recoveryosd
