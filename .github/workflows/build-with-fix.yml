@@ -298,6 +298,40 @@ jobs:
           chmod +x scripts/inspect-installed-disk.sh
           sudo bash scripts/inspect-installed-disk.sh             "$GITHUB_WORKSPACE/storage/14/data.img"
 
+      # The disk holds a complete macOS - 692 boot.efi hits, 128
+      # System/Library/CoreServices, 455 Preboot, on an AF0A APFS partition - but
+      # OpenCore offers no macOS volume. It cannot read APFS: the driver probe
+      # reported "APFS on ESP: NONE", and EnableJumpstart does not supply a
+      # driver, it hooks one the firmware is expected to have. OVMF has none.
+      #
+      # macOS writes its own copy to EFI/APPLE/EXTENSIONS/apfs.efi in the 200 MiB
+      # EFI partition while installing, so the driver needed to boot this disk is
+      # already inside it. Copy it into OpenCore's driver directory and list it in
+      # the config, and the AF0A container becomes readable.
+      - name: give OpenCore an APFS driver from the disk itself
+        id: apfs
+        run: |
+          set -eux
+          sudo apt-get install -y -qq mtools
+          chmod +x scripts/fix-opencore-apfs.sh
+          sudo bash scripts/fix-opencore-apfs.sh \
+            "$GITHUB_WORKSPACE/storage/14/data.img" \
+            "$GITHUB_WORKSPACE/storage/14/boot.img"
+
+          WORK=/tmp/apfscfg
+          rm -rf "$WORK"; mkdir -p "$WORK"
+          sudo mcopy -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+            ::/EFI/OC/config.plist "$WORK/config.plist"
+          sudo chown "$(id -u):$(id -g)" "$WORK/config.plist"
+          python3 scripts/enable-apfs-driver.py "$WORK/config.plist"
+          sudo mcopy -o -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+            "$WORK/config.plist" ::/EFI/OC/config.plist
+
+          echo "=== config as stored in boot.img ==="
+          sudo mcopy -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+            ::/EFI/OC/config.plist "$WORK/verify.plist"
+          python3 scripts/check-config-drivers.py "$WORK/verify.plist"
+
       - name: resume the install (the reboot startosinstall waits for)
         if: false    # disabled: resume provably does nothing (disk sat at 27306 MiB for 55 min)
         id: resume
@@ -369,7 +403,6 @@ jobs:
           docker stop -t 300 macstage2 || true
           docker rm -f macstage2 || true
       - name: boot the golden disk directly and look at the desktop
-        if: false    # disabled: resume provably does nothing (disk sat at 27306 MiB for 55 min)
         id: desktop
         run: |
           set -eux
@@ -383,23 +416,18 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           sudo apt-get install -y -qq qemu-system-x86 mtools
 
-          # No config surgery here.
+          # boot.img now carries apfs.efi, taken from the disk's own EFI
+          # partition and listed in its config. If OpenCore can read the AF0A
+          # container it will offer Macintosh HD and boot straight through - the
+          # config already sets ShowPicker=false, HideAuxiliary=true, Timeout=2.
           #
-          # I added a step that rewrote /EFI/OC/config.plist inside boot.img,
-          # expecting the bake's config to have ShowPicker=true. It does not:
-          # dockur copies the same assets/config.plist this repo ships, and that
-          # file already says ShowPicker=false, HideAuxiliary=true, Timeout=2.
-          #
-          # So the picker in the screenshot is not a policy problem. With no
-          # bootable volume to offer, OpenCore exhausts its 2-second timeout and
-          # stays on the menu it would otherwise have skipped. The fix belongs in
-          # the disk, not the config - and the extra step only added a way to
-          # fail before booting (mcopy against a partition offset I was guessing).
+          # A pre-installed system needs a minute or two, not forty: the long
+          # window earlier existed to watch an install that never happened.
           chmod +x scripts/boot-golden.sh
           sudo -E bash scripts/boot-golden.sh \
             "$GITHUB_WORKSPACE/storage/14" \
             /tmp/golden-monitor.sock \
-            2400 &
+            600 &
           BOOT_WAIT=$!
 
           # Forty minutes of looks, not seven.
@@ -426,8 +454,8 @@ jobs:
           }
 
           prev=""
-          for round in $(seq 1 8); do
-            sleep 300
+          for round in $(seq 1 6); do
+            sleep 120
             used=$(du -sm "$GITHUB_WORKSPACE/storage" | cut -f1)
             echo "=== round $round: disk=${used}MiB (previous=${prev:-none}) ==="
             shot "desktop$round" || echo "round $round screenshot failed"
