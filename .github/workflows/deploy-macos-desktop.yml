@@ -152,7 +152,7 @@ jobs:
           BOOT=$!
           sleep 60
 
-          chmod x scripts/setup-assistant-drive.py scripts/qmp.py
+          chmod +x scripts/setup-assistant-drive.py scripts/qmp.py
 
           # Prove the pointer actually responds before trusting the driver with
           # twenty minutes of clicks. The previous two attempts both looked like
