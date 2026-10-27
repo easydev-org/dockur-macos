@@ -530,15 +530,21 @@ def main():
                 # stays grey until it is pressed. Sweeping the lower-left band is the
                 # only way to find it without reading its exact wording.
                 log("step %d: transfer pane; looking for the skip link" % step)
+                # Positions are absolute now, not fractions. The frame gives the exact
+                # geometry: the window spans x=560..1360, its paragraphs end at y=706,
+                # and the button row is at y=800..823. "Don't transfer any information
+                # now" is a link sitting under the last paragraph, left-aligned inside
+                # the window - so around x=700..900, y=735..775. Fractions of the full
+                # screen put the earlier sweep in the wrong place entirely.
                 nested = getattr(main, "transfer_sweep", 0)
-                spots = ((0.33, 0.68), (0.30, 0.72), (0.36, 0.72), (0.33, 0.76),
-                         (0.28, 0.66), (0.40, 0.70))
+                spots = ((760, 745), (820, 745), (700, 755), (860, 750),
+                         (760, 770), (900, 745), (680, 740), (800, 765))
                 if nested < len(spots):
-                    fx, fy = spots[nested]
+                    px_, py_ = spots[nested]
                     main.transfer_sweep = nested + 1
-                    log("step %d: clicking lower-left spot (%.2f,%.2f) [%d/%d]"
-                        % (step, fx, fy, nested + 1, len(spots)))
-                    screen.click(int(W * fx), int(H * fy))
+                    log("step %d: clicking skip-link candidate (%d,%d) [%d/%d]"
+                        % (step, px_, py_, nested + 1, len(spots)))
+                    screen.click(px_, py_)
                     time.sleep(3)
                     screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                     time.sleep(7)
