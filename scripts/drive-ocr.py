@@ -190,6 +190,29 @@ def find_list_rows(words):
     return rows
 
 
+# The country to select on the first pane. Left at its default the machine ends up
+# set to whatever macOS highlights first, which is Afghanistan - a locale nobody
+# asked for, and every later pane inherits its language and region from it.
+WANTED_COUNTRY = ("United States", "United Kingdom")
+
+
+def find_wanted_country(words):
+    """The row for WANTED_COUNTRY, if the list has scrolled far enough to show it.
+
+    The list is alphabetical and starts at A, so United States is not on screen at
+    first. Scrolling to it with the keyboard is the reliable way: click into the
+    list to give it focus, then type the first letters, which macOS list widgets use
+    to jump. If the wanted name appears in the OCR output, it is clicked directly.
+    """
+    for wanted in WANTED_COUNTRY:
+        first = wanted.split()[0].lower()
+        for text, x, y, w, h in words:
+            clean = text.strip(" ‘`'\"|")
+            if clean.lower().startswith(first) and 480 < y < 760:
+                return (x, y), clean
+    return None, None
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -240,6 +263,37 @@ def main():
 
         if not words:
             log("step %d: nothing readable; pressing Return" % step)
+            screen.key("ret")
+            time.sleep(8)
+            continue
+
+        low = joined.lower()
+
+        # --- country pane: pick a country somebody would actually choose -------
+        # The list opens with Afghanistan highlighted, and every later pane takes
+        # its language and region from whatever is selected here. Clicking into the
+        # list and typing the first letters jumps the selection, which is how these
+        # list widgets work and is far more reliable than scrolling an unknown
+        # distance.
+        if "country or region" in low:
+            picked, picked_label = find_wanted_country(words)
+            if picked is not None:
+                log("step %d: clicking country %r at %s" % (step, picked_label, picked))
+                screen.click(picked[0], picked[1])
+                time.sleep(2)
+            else:
+                log("step %d: country %r not visible; typing to jump the list"
+                    % (step, WANTED_COUNTRY[0]))
+                # Click a row to focus the list, then type - list widgets jump to the
+                # first entry matching the typed prefix.
+                rows = find_list_rows(words)
+                if rows:
+                    screen.click(rows[0][0][0], rows[0][0][1])
+                    time.sleep(1)
+                for ch in WANTED_COUNTRY[0].split()[0].lower():
+                    screen.key(ch)
+                    time.sleep(0.15)
+                time.sleep(2)
             screen.key("ret")
             time.sleep(8)
             continue
