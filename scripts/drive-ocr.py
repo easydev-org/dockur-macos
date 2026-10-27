@@ -470,13 +470,20 @@ def main():
                 time.sleep(8)
                 after = signature_from(screen, prefix, step)
                 log("step %d: after Back -> %s" % (step, after))
-                # Now on the transfer pane: choose the card that declines, which is
-                # the lower one of the pair, then accept.
-                log("step %d: clicking the lower card, then the primary button" % step)
-                screen.click(W // 2, int(H * 0.56))
-                time.sleep(3)
+                # Back lands on Migration Assistant, and the way forward from there is
+                # its own Continue - not another card. Clicking a card there opens the
+                # transfer pane again, whose first card opens this search sub-pane,
+                # and the loop closes:
+                #
+                #   Back -> Migration Assistant -> card -> search -> Back -> ...
+                #
+                # The log showed exactly that cycle for five steps. So after Back the
+                # primary button is pressed and nothing else.
+                log("step %d: clicking the primary button on %r" % (step, after))
                 screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                 time.sleep(9)
+                after2 = signature_from(screen, prefix, step)
+                log("step %d: now at -> %s" % (step, after2))
                 continue
 
             # Print every word OCR found, once per pane. When a pane resists, the
