@@ -510,13 +510,27 @@ def main():
             # the one that leads somewhere: the right card opens the network search
             # sub-pane, which can never succeed in a container.
             if "transfer information" in joined.lower():
-                log("step %d: transfer pane; clicking the left card" % step)
-                screen.click(int(W * 0.38), int(H * 0.47))
-                time.sleep(3)
-                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
-                time.sleep(9)
-                after = signature_from(screen, prefix, step)
-                log("step %d: after the left card -> %s" % (step, after))
+                # The cards are drawn, not written - OCR returns nothing for the
+                # region they occupy, so their position has to be swept rather than
+                # read. The pane's text gives the frame: heading at y=323, the
+                # instruction at y=363, and the "Looking for other sources" paragraph
+                # at y=610. The cards live between those, roughly y=400..580, laid out
+                # left and right of centre.
+                #
+                # A sweep of candidates, each followed by the primary button, and the
+                # pane is only re-read after all of them - a click that lands on a card
+                # produces no visible change until the button beside it is pressed.
+                log("step %d: transfer pane; sweeping the card positions" % step)
+                for fx, fy in ((0.38, 0.45), (0.62, 0.45), (0.38, 0.52), (0.30, 0.48)):
+                    screen.click(int(W * fx), int(H * fy))
+                    time.sleep(2)
+                    screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                    time.sleep(6)
+                    after = signature_from(screen, prefix, step)
+                    if after is not None and "transfer information" not in after.lower():
+                        log("step %d: card at (%.2f,%.2f) advanced -> %s"
+                            % (step, fx, fy, after))
+                        break
                 continue
             # A pane whose button row OCR cannot read. Two things are worth trying,
             # in this order, and the order matters:
