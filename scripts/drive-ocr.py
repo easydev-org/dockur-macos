@@ -64,6 +64,26 @@ SKIP_BUTTON = (604, 810)
 # click landed on the page behind it and the dialog stayed up.
 SHEET_SKIP = (1026, 634)
 
+# The account form's fields, read off a screenshot of it. Two details matter and
+# both were wrong in the guessed version:
+#
+#   Full Name    (942,455)
+#   Account Name (942,486)
+#   Password     (896,528)   \
+#   Verify      (1057,528)   / on ONE row, side by side
+#   Hint         (978,562)
+#
+# The guessed version stacked all five vertically at y=470..710, so Password and
+# Verify were never both filled, and Continue kept answering "You haven't provided
+# all of the requested information".
+ACCOUNT_FIELDS = (
+    ("full name", 942, 455, "Sandbox"),
+    ("account name", 942, 486, "sandbox"),
+    ("password", 896, 528, "sandbox"),
+    ("verify", 1057, 528, "sandbox"),
+    ("hint", 978, 562, "hint"),
+)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -528,17 +548,13 @@ def main():
         if "computer account" in joined.lower() or "create a computer" in joined.lower():
             if not getattr(main, "account_filled", False):
                 log("step %d: account pane; filling the form" % step)
-                fields = [
-                    ("full name", 470, "Sandbox"),
-                    ("account name", 530, "sandbox"),
-                    ("password", 590, "sandbox"),
-                    ("verify", 650, "sandbox"),
-                    ("hint", 710, "hint"),
-                ]
-                for label, y, value in fields:
-                    log("account: %s at y=%d" % (label, y))
-                    screen.click(int(W * 0.50), y)
+                for label, x, y, value in ACCOUNT_FIELDS:
+                    log("account: %s at (%d,%d)" % (label, x, y))
+                    screen.click(x, y)
                     time.sleep(0.8)
+                    # Clear whatever a previous pass may have left, then type.
+                    qmpmod.key(screen.q, "ctrl-a")
+                    time.sleep(0.2)
                     for ch in value:
                         screen.key(ch)
                         time.sleep(0.12)
