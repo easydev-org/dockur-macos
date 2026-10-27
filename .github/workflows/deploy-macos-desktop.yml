@@ -266,15 +266,24 @@ jobs:
             mkdir -p frames
             chmod 777 frames
 
+            # OCR runs on this host, so it needs tools the launcher image does not
+            # carry. tesseract is in OSX-KVM's own dependency list for exactly this
+            # job, and reading the screen is what every coordinate guess here was
+            # missing.
+            sudo apt-get install -y -qq tesseract-ocr
+
             # /dev/kvm exists on the runner but its group may not be applied yet.
             echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
             sudo udevadm control --reload-rules || true
             sudo udevadm trigger --name-match=kvm || true
             sudo chmod 666 /dev/kvm || true
 
-            chmod +x scripts/drive-in-container.sh
+            chmod +x scripts/drive-in-container.sh scripts/drive-ocr.py scripts/qmp.py scripts/ppm2png.py
             docker rm -f driver >/dev/null 2>&1 || true
-            docker run --rm --name driver \
+
+            # qemu in the image, driver on this host, joined by the QMP socket that
+            # the bind mount makes visible to both.
+            docker run -d --name driver \
               --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
               --entrypoint sh \
               -v "$GITHUB_WORKSPACE/vm:/vm" \
@@ -282,8 +291,19 @@ jobs:
               -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
               "$IMG" /scripts/drive-in-container.sh
 
+            # Wait for qemu to create the socket, then drive it.
+            for i in $(seq 1 40); do
+              [ -S frames/monitor.sock.qmp ] && break
+              sleep 5
+              docker ps --filter name=driver --format '{{.Status}}' || true
+            done
+            ls -la frames/ || true
+
+            python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
+
             echo "=== frames ==="
             ls -la frames | tail -25 || true
+            docker stop -t 30 driver >/dev/null 2>&1 || true
 
       # The disk is the deliverable: if the wizard was completed, this is a disk
       # that boots straight to a desktop.

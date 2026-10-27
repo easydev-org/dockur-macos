@@ -86,5 +86,16 @@ if ! kill -0 "$QEMU_PID" 2>/dev/null; then
   exit 1
 fi
 
-# Python drives it; the script is mounted read-only at /scripts.
-exec python3 /scripts/setup-assistant-drive.py "$MON" "$OUT/frame"
+# Hand the QMP socket back to the caller and stay alive.
+#
+# The DRIVER does not run here. This image is a complete environment for qemu and a
+# poor one for everything else - it is Alpine, with no OCR tooling and no easy way
+# to add any. The host has apt. So the split is: qemu stays where its libraries
+# live, the driver runs on the host where its tools live, and they meet at the QMP
+# socket on the bind-mounted frames directory. A Unix socket survives that mount,
+# so the host can speak QMP to a process in here without any port forwarding.
+log "qemu is up; QMP socket at $MON.qmp is visible to the host through the bind mount"
+while kill -0 "$QEMU_PID" 2>/dev/null; do
+  sleep 5
+done
+log "qemu exited"
