@@ -519,7 +519,23 @@ def main():
                 screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                 time.sleep(8)
                 continue
-            log("step %d: unchanged and no rows; pressing Return" % step)
+
+            # No rows either. On the transfer pane the selectable options are drawn
+            # as icons with their labels underneath, and OCR returns only the
+            # instruction paragraphs - the whole card area at y=400..560 comes back
+            # empty. Clicking into that empty region is what a person does: the cards
+            # are there, they just have no readable text.
+            log("step %d: unchanged and no rows; clicking the option-card area" % step)
+            screen.click(W // 2, int(H * 0.44))
+            time.sleep(3)
+            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(screen, prefix, step)
+            if after is not None and after != shortened:
+                log("step %d: that advanced the pane -> %s" % (step, after))
+                continue
+
+            log("step %d: still unchanged; pressing Return" % step)
             screen.key("ret")
             time.sleep(8)
             continue
