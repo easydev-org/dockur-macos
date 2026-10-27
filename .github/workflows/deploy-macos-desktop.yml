@@ -274,8 +274,7 @@ jobs:
             # Prove OCR works before the driver depends on it. A silent OCR failure
             # reads exactly like a blank screen, and that cost two runs.
             tesseract --version | head -1
-            printf 'Continue
-' > /tmp/ocrtest.txt
+            echo Continue > /tmp/ocrtest.txt
             sudo python3 -c "import subprocess; print(subprocess.run(['tesseract','/tmp/ocrtest.txt','stdout'],capture_output=True,text=True).stdout.strip())"
 
             # /dev/kvm exists on the runner but its group may not be applied yet.
