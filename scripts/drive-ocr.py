@@ -518,6 +518,43 @@ def main():
                 continue
             continue
 
+        # The account creation pane. This is the one pane that cannot be clicked
+        # through - it needs five fields typed, and until they are filled Continue
+        # refuses with "You haven't provided all of the requested information".
+        #
+        # The fields are stacked under the pane's title, and each is clicked before
+        # typing because tab order is not guaranteed. Names here are deliberately
+        # simple: the account must exist for the machine to reach a desktop.
+        if "computer account" in joined.lower() or "create a computer" in joined.lower():
+            if not getattr(main, "account_filled", False):
+                log("step %d: account pane; filling the form" % step)
+                fields = [
+                    ("full name", 470, "Sandbox"),
+                    ("account name", 530, "sandbox"),
+                    ("password", 590, "sandbox"),
+                    ("verify", 650, "sandbox"),
+                    ("hint", 710, "hint"),
+                ]
+                for label, y, value in fields:
+                    log("account: %s at y=%d" % (label, y))
+                    screen.click(int(W * 0.50), y)
+                    time.sleep(0.8)
+                    for ch in value:
+                        screen.key(ch)
+                        time.sleep(0.12)
+                    time.sleep(0.5)
+                main.account_filled = True
+                log("account form filled")
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(9)
+                log("step %d: after Continue -> %s"
+                    % (step, signature_from(main, prefix, step)))
+                continue
+            # A second pass means a field was rejected; try once more from the top.
+            log("step %d: account pane again; retrying the form" % step)
+            main.account_filled = False
+            continue
+
         # No button was recognised. Click where the primary button sits anyway.
         #
         # Every pane of this wizard puts its forward control at the lower right, and
