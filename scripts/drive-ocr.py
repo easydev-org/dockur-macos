@@ -386,8 +386,36 @@ def main():
             stuck = 0
         previous = shortened
 
-        # A desktop has a menu bar; the wizard always shows a button near the bottom.
         low = joined.lower()
+
+        # Keyboard Setup Assistant first, BEFORE the desktop check.
+        #
+        # It appears on top of the desktop itself - the guest has no Apple keyboard to
+        # identify - and its window does not stop the Finder menu bar from being
+        # readable behind it. So a check for "finder" fires and declares success while
+        # this dialog still covers the screen. Ordering is the whole fix.
+        #
+        # "Quit" is the control that dismisses it, at the same lower-left position the
+        # wizard's declining options use.
+        if "keyboard setup assistant" in low:
+            log("step %d: keyboard setup assistant; clicking Quit at %s"
+                % (step, SKIP_BUTTON))
+            screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
+            time.sleep(7)
+            after = signature_from(screen, prefix, step)
+            log("step %d: after Quit -> %s" % (step, after))
+            if after is not None and "keyboard setup" in after.lower():
+                # Its own buttons, measured the same way as the other sheets.
+                for qx, qy in ((1000, 660), (1026, 634), (1130, 660), (1306, 700)):
+                    screen.click(qx, qy)
+                    time.sleep(6)
+                    after = signature_from(screen, prefix, step)
+                    if after is None or "keyboard setup" not in after.lower():
+                        log("step %d: closed at (%d,%d) -> %s" % (step, qx, qy, after))
+                        break
+            continue
+
+        # Only now: a desktop has a menu bar and no wizard button.
         if "finder" in low and "continue" not in low:
             log("DESKTOP REACHED at step %d" % step)
             break
