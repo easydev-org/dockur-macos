@@ -372,7 +372,7 @@ def main():
     previous = None
     stuck = 0
 
-    for step in range(1, 30):
+    for step in range(1, 45):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
         joined = " ".join(w[0] for w in words)
@@ -601,9 +601,10 @@ def main():
                 # positioned differently.
                 log("step %d: location confirmation; sweeping sheet candidates" % step)
                 tries = getattr(main, "loc_sheet", 0)
-                spots = (PRIMARY_BUTTON, SHEET_SKIP, (899, 634), (1306, 700),
-                         (1222, 810), (960, 700), (1130, 660), (1306, 750),
-                         (1100, 700), (1000, 660))
+                # (1000,660) is measured: it is the one that dismissed this sheet, at
+                # step 28. Tried first now, with the others kept as fallbacks.
+                spots = ((1000, 660), PRIMARY_BUTTON, SHEET_SKIP, (899, 634),
+                         (1306, 700), (1222, 810), (960, 700), (1130, 660))
                 if tries < len(spots):
                     lx, ly = spots[tries]
                     main.loc_sheet = tries + 1
