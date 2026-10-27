@@ -208,10 +208,16 @@ jobs:
           while read -r lib; do
             [ -n "$lib" ] || continue
             base=$(basename "$lib")
-            # Skip anything the runner already has: copying a mismatched glibc over
-            # the host one would break far more than it fixes.
-            [ -e "/lib/x86_64-linux-gnu/$base" ] && continue
-            [ -e "/usr/lib/x86_64-linux-gnu/$base" ] && continue
+            # Copy every library the binary names, with one exception: the C library
+            # and the loader itself. Those must come from the host or nothing on it
+            # runs. Everything else - including a library the host happens to have
+            # under a different soname version, which is what broke this the second
+            # time (libjpeg.so.62 missing while the host carried a different major)
+            # - travels beside the binary.
+            case "$base" in
+              libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|ld-linux*|libgcc_s.so.*)
+                continue ;;
+            esac
             docker cp "assets:$lib" "qemu/lib/$base" 2>/dev/null || true
           done < qemu/ldd.txt
 
