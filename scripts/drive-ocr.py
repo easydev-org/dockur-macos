@@ -571,6 +571,20 @@ def main():
             main.account_filled = False
             continue
 
+        # The location-services confirmation, which appears right after the account
+        # is accepted. Its declining answer is the one to give: nothing in a container
+        # has a location, and the sheet's buttons are again well inside the window.
+        if "location services" in joined.lower():
+            log("step %d: location services sheet; looking for the declining button" % step)
+            for lx, ly in ((1026, 634), (899, 634), (1130, 700), (960, 700)):
+                screen.click(lx, ly)
+                time.sleep(7)
+                now_at = signature_from(screen, prefix, step)
+                if now_at is None or "location services" not in now_at.lower():
+                    log("step %d: dismissed at (%d,%d) -> %s" % (step, lx, ly, now_at))
+                    break
+            continue
+
         # No button was recognised. Click where the primary button sits anyway.
         #
         # Every pane of this wizard puts its forward control at the lower right, and
