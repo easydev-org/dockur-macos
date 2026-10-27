@@ -430,6 +430,34 @@ def main():
         # Clicking the known button position first, and only then trying a row, fixes
         # that ordering: the button is right where the wizard always puts it.
         if target is None:
+            # A pane whose button row OCR cannot read. Two things are worth trying,
+            # in this order, and the order matters:
+            #
+            # 1. Click the option list's first row. Panes like "Transfer information
+            #    to this Mac" put a selectable list in the middle and leave Continue
+            #    grey until a row is chosen - the screenshot of that pane shows
+            #    Continue disabled. Clicking the primary position does nothing while
+            #    the list is unselected, which is why twelve steps produced no
+            #    movement.
+            #
+            # 2. Only then the primary position, which works on panes that need no
+            #    choice at all - it is what carried the run through language,
+            #    accessibility, privacy and migration.
+            rows_all = find_list_rows(words)
+            if rows_all:
+                first = rows_all[0]
+                log("step %d: no button; clicking first list row %r at %s"
+                    % (step, first[1], first[0]))
+                screen.click(first[0][0], first[0][1])
+                time.sleep(3)
+                log("step %d: then the primary button position" % step)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(9)
+                after = signature_from(screen, prefix, step)
+                if after is not None and after != shortened:
+                    log("step %d: that advanced the pane -> %s" % (step, after))
+                    continue
+
             log("step %d: no button recognised; clicking the primary button position"
                 % step)
             screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
