@@ -524,21 +524,51 @@ def main():
                 #
                 # So go back, and take the declining option there rather than trying to
                 # satisfy this pane.
+                # Before going Back, try the skip link. macOS puts "Don't transfer any
+                # information now" as a text link in the lower-left of this pane rather
+                # than as a button, so OCR reads it as prose and the primary button
+                # stays grey until it is pressed. Sweeping the lower-left band is the
+                # only way to find it without reading its exact wording.
+                log("step %d: transfer pane; looking for the skip link" % step)
+                nested = getattr(main, "transfer_sweep", 0)
+                spots = ((0.33, 0.68), (0.30, 0.72), (0.36, 0.72), (0.33, 0.76),
+                         (0.28, 0.66), (0.40, 0.70))
+                if nested < len(spots):
+                    fx, fy = spots[nested]
+                    main.transfer_sweep = nested + 1
+                    log("step %d: clicking lower-left spot (%.2f,%.2f) [%d/%d]"
+                        % (step, fx, fy, nested + 1, len(spots)))
+                    screen.click(int(W * fx), int(H * fy))
+                    time.sleep(3)
+                    screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                    time.sleep(7)
+                    now_at = signature_from(screen, prefix, step)
+                    log("step %d: now at -> %s" % (step, now_at))
+                    if now_at is not None and "transfer" not in now_at.lower():
+                        log("step %d: the skip link worked" % step)
+                        main.transfer_sweep = 0
+                    continue
+
                 log("step %d: transfer search pane is a dead end; going Back" % step)
+                main.transfer_sweep = 0
                 screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
                 time.sleep(8)
                 after = signature_from(screen, prefix, step)
                 log("step %d: after Back -> %s" % (step, after))
-                # On Migration Assistant the declining control sits bottom-left of the
-                # button row, left of centre. Sweep a few positions along that row,
-                # checking the pane after each.
-                for fx in (0.62, 0.55, 0.68, 0.48):
+                # On Migration Assistant the declining control is the primary one, in
+                # the usual lower-right position - that is how macOS offers "don't do
+                # this" as the default path. Sweeping left of centre lands on Back,
+                # which goes backwards to Data & Privacy; the primary position is what
+                # moves forward. Tried primary first, and the left-hand positions only
+                # if it does not move.
+                for fx in (0.68, 0.70, 0.66):
                     screen.click(int(W * fx), 810)
-                    time.sleep(7)
+                    time.sleep(8)
                     now_at = signature_from(screen, prefix, step)
                     if now_at is not None and "migration assistant" not in now_at.lower():
-                        log("step %d: button at x=%.2f advanced -> %s" % (step, fx, now_at))
+                        log("step %d: x=%.2f advanced -> %s" % (step, fx, now_at))
                         break
+                    log("step %d: x=%.2f did not advance (still %r)" % (step, fx, now_at))
                 continue
             # A pane whose button row OCR cannot read. Two things are worth trying,
             # in this order, and the order matters:
