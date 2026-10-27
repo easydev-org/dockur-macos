@@ -48,6 +48,13 @@ BACK_BUTTON = (1218, 810)
 # Continue. OCR does not return it, so its position has to be known.
 NOT_NOW_BUTTON = (604, 810)
 
+# Keyboard Setup Assistant's Quit button, read off a screenshot of it. That dialog
+# spans the whole window (x=560..1360, y=216..849) rather than floating as a small
+# sheet, so its buttons sit on the ordinary button row - Quit at 1223 and Continue at
+# 1304. Clicking (604,810), where the wizard's declining options live, hit nothing,
+# which is why twenty-one steps went by with the dialog still up.
+KEYBOARD_QUIT = (1223, 814)
+
 # Same shape of control on the panes that follow: "Set Up Later" on the Apple ID
 # pane, and equivalents elsewhere, sit alone on the LEFT of the button row while
 # Back and Continue sit right. Not now proved this is where the declining option
@@ -398,21 +405,24 @@ def main():
         # "Quit" is the control that dismisses it, at the same lower-left position the
         # wizard's declining options use.
         if "keyboard setup assistant" in low:
+            # This dialog is the size of the whole window (x=560..1360, y=216..849),
+            # so its buttons are on the ordinary button row: Quit at 1223, Continue at
+            # 1304. Twenty-one steps were spent clicking (604,810) - where the wizard's
+            # left-hand declining options live - and that dialog has nothing there.
             log("step %d: keyboard setup assistant; clicking Quit at %s"
-                % (step, SKIP_BUTTON))
-            screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
+                % (step, KEYBOARD_QUIT))
+            screen.click(KEYBOARD_QUIT[0], KEYBOARD_QUIT[1])
             time.sleep(7)
             after = signature_from(screen, prefix, step)
             log("step %d: after Quit -> %s" % (step, after))
             if after is not None and "keyboard setup" in after.lower():
-                # Its own buttons, measured the same way as the other sheets.
-                for qx, qy in ((1000, 660), (1026, 634), (1130, 660), (1306, 700)):
-                    screen.click(qx, qy)
-                    time.sleep(6)
-                    after = signature_from(screen, prefix, step)
-                    if after is None or "keyboard setup" not in after.lower():
-                        log("step %d: closed at (%d,%d) -> %s" % (step, qx, qy, after))
-                        break
+                # Continue is the other button; either one closes the dialog, and
+                # Continue is the one that does not raise "are you sure".
+                log("step %d: still up; clicking Continue instead" % step)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(7)
+                log("step %d: now at -> %s"
+                    % (step, signature_from(screen, prefix, step)))
             continue
 
         # Only now: a desktop has a menu bar and no wizard button.
