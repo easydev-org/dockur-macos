@@ -87,11 +87,16 @@ def signature(mon, path):
 
 
 def find_accent_bands(ppm_path, x_lo=0, x_hi=W):
-    """Locate bands of accent-coloured pixels, widest first.
+    """Locate bands of accent-coloured pixels, and say how full each is.
 
-    Returns [(y0, y1, x0, x1, pixels)]. Setup Assistant paints the selected row and
-    the default button in macOS accent blue; the window background is neutral grey
-    and never matches, so this finds clickable things from the frame itself.
+    Returns [(y0, y1, x0, x1, pixels, density)], densest first.
+
+    DENSITY IS WHAT SEPARATES A ROW FROM A BUTTON. The country list's selected row is
+    filled solid: its band covers 3184 sampled pixels, roughly half of the area it
+    spans. Continue with keyboard focus draws a thin focus ring instead - the same
+    y=498..722 x=808..1112 band came back with only 1200 pixels, about 14% of its
+    area. Clicking that ring does nothing, which is why the driver sat there
+    clicking (960,610) three times a pane and never advanced.
     """
     try:
         with open(ppm_path, "rb") as fh:
@@ -132,8 +137,15 @@ def find_accent_bands(ppm_path, x_lo=0, x_hi=W):
             current = None
     if current is not None:
         bands.append(tuple(current))
-    bands.sort(key=lambda b: -b[4])
-    return bands
+
+    # Density: sampled pixels that matched, over the sampled pixels the band spans.
+    measured = []
+    for y0, y1, x0, x1, n in bands:
+        rows = max(1, (y1 - y0) // 2 + 1)
+        cols = max(1, (x1 - x0) // 4 + 1)
+        measured.append((y0, y1, x0, x1, n, float(n) / (rows * cols)))
+    measured.sort(key=lambda b: -b[5])
+    return measured
 
 
 def is_desktop(sig):
@@ -169,7 +181,13 @@ def main():
     log("qmp connected via " + mon_path + ".qmp")
 
     def locate_and_click(label, wait=10):
-        """Screenshot, find the widest accent band, click its centre."""
+        """Screenshot, click the densest accent band, then press Return.
+
+        The click selects (a row, a radio button); Return activates the pane's
+        default control. Clicking Continue directly does not work, because with
+        keyboard focus it is drawn as a ring rather than filled, and the ring's
+        centre is not the button.
+        """
         ppm = mon.shot(prefix + "-" + label)
         if not ppm:
             log("%s: no frame" % label)
@@ -178,11 +196,16 @@ def main():
         if not bands:
             log("%s: nothing accent-coloured on screen" % label)
             return None
-        y0, y1, x0, x1, n = bands[0]
+        y0, y1, x0, x1, n, density = bands[0]
         cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        log("%s: accent band y=%d..%d x=%d..%d (%d px) -> click (%d,%d)"
-            % (label, y0, y1, x0, x1, n, cx, cy))
-        mon.click(cx, cy)
+        log("%s: densest band y=%d..%d x=%d..%d (%d px, %.0f%% full) -> click (%d,%d) then Return"
+            % (label, y0, y1, x0, x1, n, density * 100, cx, cy))
+        if density >= 0.25:
+            mon.click(cx, cy)
+            time.sleep(1.5)
+        # Return activates the default button whether or not the click selected
+        # something - on panes that need no choice it is the only action needed.
+        qmpmod.key(mon.q, "ret")
         time.sleep(wait)
         return (cx, cy)
 
