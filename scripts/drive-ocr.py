@@ -314,23 +314,29 @@ def main():
         # distance.
         if "country or region" in low:
             picked, picked_label = find_wanted_country(words)
-            if picked is not None:
+            if picked is not None and picked_label.lower() == WANTED_COUNTRY[0].lower():
                 log("step %d: clicking country %r at %s" % (step, picked_label, picked))
                 screen.click(picked[0], picked[1])
                 time.sleep(2)
-            else:
-                log("step %d: country %r not visible; typing to jump the list"
-                    % (step, WANTED_COUNTRY[0]))
-                # Click a row to focus the list, then type - list widgets jump to the
-                # first entry matching the typed prefix.
-                rows = find_list_rows(words)
-                if rows:
-                    screen.click(rows[0][0][0], rows[0][0][1])
-                    time.sleep(1)
-                for ch in WANTED_COUNTRY[0].split()[0].lower():
-                    screen.key(ch)
-                    time.sleep(0.15)
-                time.sleep(2)
+                screen.key("ret")
+                time.sleep(8)
+                continue
+
+            # The wanted name is not fully on screen - usually because the row sits
+            # at the bottom edge, only partly visible. Typing jumps the list and
+            # leaves the matching row selected, so Return is enough; clicking a
+            # half-visible row at y=709 did nothing at all, twice.
+            log("step %d: typing %r to jump the list, then Return"
+                % (step, WANTED_COUNTRY[0]))
+            rows = find_list_rows(words)
+            if rows:
+                # Focus the list without relying on which row is under the pointer.
+                screen.click(rows[0][0][0], rows[0][0][1])
+                time.sleep(1)
+            for ch in WANTED_COUNTRY[0].split()[0].lower():
+                screen.key(ch)
+                time.sleep(0.2)
+            time.sleep(2)
             screen.key("ret")
             time.sleep(8)
             continue
