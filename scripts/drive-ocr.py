@@ -481,12 +481,34 @@ def main():
             time.sleep(9)
             after = signature_from(screen, prefix, step)
             log("step %d: after Set Up Later -> %s" % (step, after))
-            if after is not None and "apple id" in after.lower():
-                # There is a confirmation dialog behind it, whose declining button is
-                # the primary one.
-                log("step %d: confirming the skip" % step)
-                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
-                time.sleep(8)
+            if after is not None and "are you sure" in after.lower():
+                # A confirmation sheet: "Are you sure you want to skip sign in with an
+                # Apple ID?" with Skip and Cancel. It is a smaller sheet centred over
+                # the main window, so its buttons are NOT at the main window's
+                # (1306,810) - clicking there hits the sheet's own blank area and the
+                # dialog stays up, which is what the log shows step after step.
+                #
+                # The sheet's buttons sit on its lower edge, and "Skip" is the
+                # confirming one, on the right of that pair. Sweep along the sheet's
+                # button row: the sheet is narrower than the window, so its right-hand
+                # button is well left of 1306.
+                log("step %d: confirmation sheet; looking for Skip" % step)
+                sheet_tries = getattr(main, "sheet_tries", 0)
+                sheet_spots = ((1130, 700), (1180, 700), (1080, 700),
+                               (1130, 720), (1230, 700), (1130, 680))
+                if sheet_tries < len(sheet_spots):
+                    sx, sy = sheet_spots[sheet_tries]
+                    main.sheet_tries = sheet_tries + 1
+                    log("step %d: clicking sheet candidate (%d,%d) [%d/%d]"
+                        % (step, sx, sy, sheet_tries + 1, len(sheet_spots)))
+                    screen.click(sx, sy)
+                    time.sleep(8)
+                    now_at = signature_from(screen, prefix, step)
+                    log("step %d: now at -> %s" % (step, now_at))
+                    if now_at is not None and "are you sure" not in now_at.lower():
+                        log("step %d: skipped the apple id" % step)
+                        main.sheet_tries = 0
+                continue
             continue
 
         # No button was recognised. Click where the primary button sits anyway.
