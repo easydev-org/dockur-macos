@@ -138,7 +138,7 @@ BUTTONS = ("continue", "agree", "accept", "not now", "don't sign in",
 def find_button(words):
     """Pick a control, preferring the lower-right corner where Continue lives.
 
-    y is required to be in the bottom fifth of the screen. On every pane of this
+    y is required to be in the bottom third of the screen. On every pane of this
     wizard the buttons are there, and insisting on it means body text can never be
     mistaken for a control even when a phrase matches.
     """
@@ -147,7 +147,7 @@ def find_button(words):
         low = text.lower().strip(" .,:;")
         if not any(low == b or low.startswith(b) for b in BUTTONS):
             continue
-        if y < H * 0.80:
+        if y < H * 0.70:
             continue
         score = (x, y)
         if best is None or score > best[0]:
@@ -155,15 +155,29 @@ def find_button(words):
     return (best[1], best[2]) if best else (None, None)
 
 
-def find_country(words):
-    """First country-looking word in the list, for the opening pane."""
+def find_list_item(words):
+    """A row of a list in the middle of the pane.
+
+    Needed on the country pane, where Continue stays grey until a row is actually
+    selected - and a grey button is not something OCR can find, so waiting for it
+    finds nothing and the run stalls. Clicking a row is what makes the button
+    appear.
+
+    The window's list area is roughly y=400..760. A word there that starts with a
+    capital is a row label; the first one is the top row, which is as good a choice
+    as any when the goal is simply to have something selected.
+    """
+    best = None
     for text, x, y, w, h in words:
-        t = text.strip()
-        if 3 <= len(t) <= 24 and t[:1].isupper() and t.isascii() and t.isalpha():
-            # In the list area of the window, below the heading.
-            if 300 < y < 800:
-                return (x, y), t
-    return None, None
+        clean = text.strip(" ‘`'\"|")
+        if not (3 <= len(clean) <= 24):
+            continue
+        if not clean[:1].isupper() or not clean.replace("&", "").replace("-", "").isalpha():
+            continue
+        if 400 < y < 760:
+            if best is None or y < best[1][1]:
+                best = ((x, y), clean)
+    return (best[0], best[1]) if best else (None, None)
 
 
 def main():
@@ -222,10 +236,28 @@ def main():
 
         target, label = find_button(words)
 
-        # Stuck on a pane: the button text was probably misread, so press Return -
-        # the default button - rather than clicking the same wrong spot again.
-        if target is None or stuck >= 2:
-            log("step %d: no usable button (stuck=%d); pressing Return" % (step, stuck))
+        # No button found means the pane is waiting for a choice: the country list
+        # is the pane that does this, and its Continue stays grey - unreadable -
+        # until a row is selected. So click a row, then Return for the button that
+        # has by then become enabled.
+        if target is None:
+            row, row_label = find_list_item(words)
+            if row is not None:
+                log("step %d: no button; clicking list row %r at %s" % (step, row_label, row))
+                screen.click(row[0], row[1])
+                time.sleep(2)
+                screen.key("ret")
+                time.sleep(8)
+                continue
+            log("step %d: no button and no list row; pressing Return" % step)
+            screen.key("ret")
+            time.sleep(8)
+            continue
+
+        # Stuck on a pane: the text was probably misread, so press the default
+        # button rather than clicking the same spot again.
+        if stuck >= 2:
+            log("step %d: still on the same pane; pressing Return" % step)
             screen.key("ret")
             time.sleep(8)
             continue
