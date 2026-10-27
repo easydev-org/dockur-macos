@@ -54,7 +54,14 @@ class Screen:
         path and reported zero words.
         """
         ppm = stem + ".ppm"
-        reply = self.q.execute("screendump", filename=ppm)
+        # qemu resolves this path inside its own container, where the frames
+        # directory is mounted at /frames. The caller works in host paths, so map
+        # only the leading directory and let both sides agree on where the file is:
+        # qemu writes /frames/x.ppm inside the container, which is the same inode as
+        # <frames>/x.ppm on the host.
+        name = os.path.basename(ppm)
+        in_container = "/frames/" + name
+        reply = self.q.execute("screendump", filename=in_container)
         if "error" in reply:
             print("[ocr] screendump error: %s" % reply["error"], flush=True)
             return None
