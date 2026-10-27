@@ -510,26 +510,34 @@ def main():
             # the one that leads somewhere: the right card opens the network search
             # sub-pane, which can never succeed in a container.
             if "transfer information" in joined.lower():
-                # The cards are drawn, not written - OCR returns nothing for the
-                # region they occupy, so their position has to be swept rather than
-                # read. The pane's text gives the frame: heading at y=323, the
-                # instruction at y=363, and the "Looking for other sources" paragraph
-                # at y=610. The cards live between those, roughly y=400..580, laid out
-                # left and right of centre.
+                # This pane is a dead end and always will be. A full screenshot shows
+                # why: there are no option cards at all, only a spinner with
+                # "Looking for other sources...", an "Other Server..." link, and two
+                # paragraphs of explanation. Continue is grey and stays grey, because
+                # the search it is waiting on wants a peer Mac on the network and there
+                # is none - there never will be, inside a container.
                 #
-                # A sweep of candidates, each followed by the primary button, and the
-                # pane is only re-read after all of them - a click that lands on a card
-                # produces no visible change until the button beside it is pressed.
-                log("step %d: transfer pane; sweeping the card positions" % step)
-                for fx, fy in ((0.38, 0.45), (0.62, 0.45), (0.38, 0.52), (0.30, 0.48)):
-                    screen.click(int(W * fx), int(H * fy))
-                    time.sleep(2)
-                    screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
-                    time.sleep(6)
-                    after = signature_from(screen, prefix, step)
-                    if after is not None and "transfer information" not in after.lower():
-                        log("step %d: card at (%.2f,%.2f) advanced -> %s"
-                            % (step, fx, fy, after))
+                # The real mistake was upstream: the Migration Assistant pane was
+                # advanced with Continue, which opens this search. Its forward control
+                # is "Don't Transfer" - the whole point of that pane is to offer a way
+                # past the migration.
+                #
+                # So go back, and take the declining option there rather than trying to
+                # satisfy this pane.
+                log("step %d: transfer search pane is a dead end; going Back" % step)
+                screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+                time.sleep(8)
+                after = signature_from(screen, prefix, step)
+                log("step %d: after Back -> %s" % (step, after))
+                # On Migration Assistant the declining control sits bottom-left of the
+                # button row, left of centre. Sweep a few positions along that row,
+                # checking the pane after each.
+                for fx in (0.62, 0.55, 0.68, 0.48):
+                    screen.click(int(W * fx), 810)
+                    time.sleep(7)
+                    now_at = signature_from(screen, prefix, step)
+                    if now_at is not None and "migration assistant" not in now_at.lower():
+                        log("step %d: button at x=%.2f advanced -> %s" % (step, fx, now_at))
                         break
                 continue
             # A pane whose button row OCR cannot read. Two things are worth trying,
