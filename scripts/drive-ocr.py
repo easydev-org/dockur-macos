@@ -54,6 +54,16 @@ NOT_NOW_BUTTON = (604, 810)
 # lives, so the same position is tried for the panes that offer one.
 SKIP_BUTTON = (604, 810)
 
+# The Apple ID confirmation sheet's own buttons, read off a screenshot of it:
+#
+#   Don't Skip (899,634)   Skip (1026,634)
+#
+# The sheet spans roughly x=833..1090, y=409..663 - far smaller than the window
+# behind it and centred well above the main button row. Six earlier candidates were
+# swept around (1080..1230, 680..720), which is outside the sheet entirely, so every
+# click landed on the page behind it and the dialog stayed up.
+SHEET_SKIP = (1026, 634)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -492,22 +502,19 @@ def main():
                 # confirming one, on the right of that pair. Sweep along the sheet's
                 # button row: the sheet is narrower than the window, so its right-hand
                 # button is well left of 1306.
-                log("step %d: confirmation sheet; looking for Skip" % step)
-                sheet_tries = getattr(main, "sheet_tries", 0)
-                sheet_spots = ((1130, 700), (1180, 700), (1080, 700),
-                               (1130, 720), (1230, 700), (1130, 680))
-                if sheet_tries < len(sheet_spots):
-                    sx, sy = sheet_spots[sheet_tries]
-                    main.sheet_tries = sheet_tries + 1
-                    log("step %d: clicking sheet candidate (%d,%d) [%d/%d]"
-                        % (step, sx, sy, sheet_tries + 1, len(sheet_spots)))
-                    screen.click(sx, sy)
+                log("step %d: confirmation sheet; clicking Skip at %s"
+                    % (step, SHEET_SKIP))
+                screen.click(SHEET_SKIP[0], SHEET_SKIP[1])
+                time.sleep(9)
+                now_at = signature_from(screen, prefix, step)
+                log("step %d: now at -> %s" % (step, now_at))
+                if now_at is not None and "are you sure" in now_at.lower():
+                    # Only if the click missed does it try the other sheet button.
+                    log("step %d: still up; clicking the left sheet button" % step)
+                    screen.click(899, 634)
                     time.sleep(8)
-                    now_at = signature_from(screen, prefix, step)
-                    log("step %d: now at -> %s" % (step, now_at))
-                    if now_at is not None and "are you sure" not in now_at.lower():
-                        log("step %d: skipped the apple id" % step)
-                        main.sheet_tries = 0
+                    log("step %d: now at -> %s"
+                        % (step, signature_from(screen, prefix, step)))
                 continue
             continue
 
