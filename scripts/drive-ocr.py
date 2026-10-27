@@ -418,7 +418,7 @@ def main():
             screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
             time.sleep(9)
             after = signature_from(screen, prefix, step)
-            if after is not None and after != sig:
+            if after is not None and after != shortened:
                 log("step %d: that advanced the pane -> %s" % (step, after))
                 continue
             # Still the same pane: it wants something selected. Click a row in the
