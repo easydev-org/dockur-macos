@@ -149,6 +149,11 @@ def find_button(words):
     prose. Together those two rules cover the failure that cost the most time here:
     clicking text that merely looked clickable.
     """
+    # Multi-word labels arrive as separate words from OCR, so the bottom area is
+    # also joined back into phrases and searched for whole labels. "Not Now" is the
+    # clearest case: without this it comes back as "Not" and "Now" and never matches
+    # a label, which is why the accessibility pane had no discoverable button at
+    # all.
     best = None
     for text, x, y, w, h in words:
         low = text.lower().strip(" .,:;")
@@ -159,7 +164,39 @@ def find_button(words):
         score = (x, y)
         if best is None or score > best[0]:
             best = (score, (x, y), text)
-    return (best[1], best[2]) if best else (None, None)
+
+    if best is not None:
+        return (best[1], best[2])
+
+    # No single word matched: rebuild phrases from words that sit on one line in the
+    # button band, left to right, and try the labels against those.
+    band = [w for w in words if w[2] > H * 0.60]
+    band.sort(key=lambda w: (w[2], w[1]))
+    line = []
+    def flush():
+        if not line:
+            return None
+        phrase = " ".join(w[0] for w in line).strip(" .,:;")
+        lowp = phrase.lower()
+        if any(lowp == b or lowp.startswith(b) for b in BUTTONS):
+            xs = [w[1] for w in line]
+            ys = [w[2] for w in line]
+            return ((sum(xs) // len(xs), sum(ys) // len(ys)), phrase)
+        return None
+    prev_y = None
+    for w in band:
+        if prev_y is not None and abs(w[2] - prev_y) > 12:
+            hit = flush()
+            if hit:
+                return hit
+            line = []
+        line.append(w)
+        prev_y = w[2]
+    if line:
+        hit = flush()
+        if hit:
+            return hit
+    return (None, None)
 
 
 def find_list_rows(words):
