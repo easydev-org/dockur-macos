@@ -138,16 +138,23 @@ BUTTONS = ("continue", "agree", "accept", "not now", "don't sign in",
 def find_button(words):
     """Pick a control, preferring the lower-right corner where Continue lives.
 
-    y is required to be in the bottom third of the screen. On every pane of this
-    wizard the buttons are there, and insisting on it means body text can never be
-    mistaken for a control even when a phrase matches.
+    Two constraints, both learned from frames rather than chosen:
+
+    y must be below 60% of the screen. Continue on the country pane sits at y=810
+    of 1080 (75%); the Accessibility pane puts "Not Now" higher, near y=700
+    (65%). Anything above that is the body copy region - the same region where
+    "System" and "See" were being clicked as if they were list rows.
+
+    And the word has to be one of BUTTONS, which contains no word that appears in
+    prose. Together those two rules cover the failure that cost the most time here:
+    clicking text that merely looked clickable.
     """
     best = None
     for text, x, y, w, h in words:
         low = text.lower().strip(" .,:;")
         if not any(low == b or low.startswith(b) for b in BUTTONS):
             continue
-        if y < H * 0.70:
+        if y < H * 0.60:
             continue
         score = (x, y)
         if best is None or score > best[0]:
@@ -155,30 +162,32 @@ def find_button(words):
     return (best[1], best[2]) if best else (None, None)
 
 
-def find_list_item(words):
-    """A row of a list in the middle of the pane.
+def find_list_rows(words):
+    """Rows of a list in the middle of the pane, top first.
 
-    Needed on the country pane, where Continue stays grey until a row is actually
-    selected - and a grey button is not something OCR can find, so waiting for it
-    finds nothing and the run stalls. Clicking a row is what makes the button
-    appear.
+    Returning all of them rather than the first lets the caller judge whether this
+    is a list at all. That distinction matters: the country pane is a list of two
+    hundred names, while the accessibility pane is a paragraph that happens to
+    contain the words "System" and "See". Clicking the first capitalised word found
+    treated both the same way, and spent twenty steps clicking prose.
 
     The heading sits at y=325..382 and the list body at y=502..719, measured from a
-    captured country pane, so only 480..760 is searched. Including the heading row
-    picked the word "Select" out of "Select Your Country or Region" - a title, not
-    a row, and clicking it selected nothing.
+    captured country pane, so only 480..760 is searched - otherwise the heading
+    word "Select" comes back as a row.
     """
-    best = None
+    rows = []
     for text, x, y, w, h in words:
         clean = text.strip(" ‘`'\"|")
         if not (3 <= len(clean) <= 24):
             continue
-        if not clean[:1].isupper() or not clean.replace("&", "").replace("-", "").isalpha():
+        if not clean[:1].isupper():
+            continue
+        if not clean.replace("&", "").replace("-", "").replace(" ", "").isalpha():
             continue
         if 480 < y < 760:
-            if best is None or y < best[0][1]:
-                best = ((x, y), clean)
-    return (best[0], best[1]) if best else (None, None)
+            rows.append(((x, y), clean))
+    rows.sort(key=lambda r: r[0][1])
+    return rows
 
 
 def main():
@@ -237,20 +246,30 @@ def main():
 
         target, label = find_button(words)
 
-        # No button found means the pane is waiting for a choice: the country list
-        # is the pane that does this, and its Continue stays grey - unreadable -
-        # until a row is selected. So click a row, then Return for the button that
-        # has by then become enabled.
+        # No button found. There are two quite different panes this can mean, and
+        # confusing them is what produced twenty steps of clicking "System" and
+        # "See" in the middle of a paragraph:
+        #
+        #   the country list  - a real list, Continue grey until a row is chosen
+        #   a plain pane      - the control's label was not recognised, and the
+        #                       only safe action is the default one, Return
+        #
+        # So a list row is clicked only when the pane actually looks like a list:
+        # several capitalised words in the list band, stacked vertically. One or
+        # two such words is body copy, and clicking body copy is never right.
         if target is None:
-            row, row_label = find_list_item(words)
-            if row is not None:
-                log("step %d: no button; clicking list row %r at %s" % (step, row_label, row))
+            rows = find_list_rows(words)
+            if len(rows) >= 3:
+                row, row_label = rows[0]
+                log("step %d: no button; list of %d rows, clicking %r at %s"
+                    % (step, len(rows), row_label, row))
                 screen.click(row[0], row[1])
                 time.sleep(2)
                 screen.key("ret")
                 time.sleep(8)
                 continue
-            log("step %d: no button and no list row; pressing Return" % step)
+            log("step %d: no button and no list (%d candidates); pressing Return"
+                % (step, len(rows)))
             screen.key("ret")
             time.sleep(8)
             continue
