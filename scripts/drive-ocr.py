@@ -198,7 +198,9 @@ def find_button(words):
     # x is treated as the primary button whatever it looks like - the position is the
     # reliable part.
     for text, x, y, w, h in words:
-        if y > H * 0.72 and abs(x - PRIMARY_BUTTON[0]) <= 60:
+        # 30px, not 60: at 60 the separator glyph between Back and Continue (x=1267)
+        # also matched, and clicking it did nothing.
+        if y > H * 0.72 and abs(x - PRIMARY_BUTTON[0]) <= 30:
             return ((x, y), text)
 
     # No single word matched. Multi-word labels arrive split, and buttons that sit
