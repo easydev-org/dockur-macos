@@ -575,10 +575,18 @@ def main():
         # is accepted. Its declining answer is the one to give: nothing in a container
         # has a location, and the sheet's buttons are again well inside the window.
         if "location services" in joined.lower():
-            log("step %d: location services sheet; looking for the declining button" % step)
-            for lx, ly in ((1026, 634), (899, 634), (1130, 700), (960, 700)):
+            # This one is a full pane, not a sheet: "Enable Location Services" with an
+            # explanation and the usual Back/Continue row. The sheet positions tried
+            # first all landed inside its body text, which is why eight steps produced
+            # no movement at all.
+            #
+            # Continuing here enables location services, which is harmless in a
+            # container - there is no location to disclose - and it is the pane's own
+            # forward control, unlike the Apple ID sheet which needed its inner button.
+            log("step %d: location services; clicking the primary button" % step)
+            for lx, ly in (PRIMARY_BUTTON, (604, 810), (1222, 810)):
                 screen.click(lx, ly)
-                time.sleep(7)
+                time.sleep(8)
                 now_at = signature_from(screen, prefix, step)
                 if now_at is None or "location services" not in now_at.lower():
                     log("step %d: dismissed at (%d,%d) -> %s" % (step, lx, ly, now_at))
