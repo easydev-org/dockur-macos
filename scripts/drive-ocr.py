@@ -48,6 +48,12 @@ BACK_BUTTON = (1218, 810)
 # Continue. OCR does not return it, so its position has to be known.
 NOT_NOW_BUTTON = (604, 810)
 
+# Same shape of control on the panes that follow: "Set Up Later" on the Apple ID
+# pane, and equivalents elsewhere, sit alone on the LEFT of the button row while
+# Back and Continue sit right. Not now proved this is where the declining option
+# lives, so the same position is tried for the panes that offer one.
+SKIP_BUTTON = (604, 810)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -462,6 +468,25 @@ def main():
             time.sleep(9)
             after = signature_from(screen, prefix, step)
             log("step %d: after Not now -> %s" % (step, after))
+            continue
+
+        # The Apple ID pane: "Sign In with Your Apple ID" with a "Set Up Later" option
+        # that lives on the left of the button row, exactly where Not now was. Signing
+        # in is neither possible nor wanted in a container, and this is the control
+        # that says so.
+        if "apple id" in joined.lower():
+            log("step %d: apple id pane; clicking Set Up Later at %s"
+                % (step, SKIP_BUTTON))
+            screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(screen, prefix, step)
+            log("step %d: after Set Up Later -> %s" % (step, after))
+            if after is not None and "apple id" in after.lower():
+                # There is a confirmation dialog behind it, whose declining button is
+                # the primary one.
+                log("step %d: confirming the skip" % step)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(8)
             continue
 
         # No button was recognised. Click where the primary button sits anyway.
