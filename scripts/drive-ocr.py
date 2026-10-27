@@ -137,7 +137,11 @@ class Screen:
 # "Not Now" - a phrase, not a word that appears in prose.
 BUTTONS = ("continue", "agree", "accept", "not now", "don't sign in",
            "do not sign in", "set up later", "start using", "get started",
-           "allow", "enable", "next", "done", "ok")
+           "allow", "enable", "next", "done", "ok",
+           # The transfer pane's forward control, which is not a Continue: it
+           # declines the migration. Without it the run clicks the primary position
+           # forever on that pane.
+           "don't transfer", "do not transfer", "not now, don't transfer")
 
 
 def find_button(words):
@@ -181,7 +185,12 @@ def find_button(words):
     # different button, and the run ended up clicking Back or nothing. Matching every
     # consecutive run of one to three words against the labels finds "Not Now" inside
     # that line and clicks its centre, which is where the button actually is.
-    band = [w for w in words if w[2] > H * 0.60]
+    # The band is broadened to 45% for the phrase search specifically. Not every
+    # forward control lives in the same corner: "Don't Transfer" sits to the left of
+    # Continue's position, and its label is long enough that OCR places it higher on
+    # the pane. The label list is what keeps this safe - no phrase in it appears in
+    # body copy - so the vertical window can be generous.
+    band = [w for w in words if w[2] > H * 0.45]
     band.sort(key=lambda w: (w[2], w[1]))
 
     def same_line(a, b):
