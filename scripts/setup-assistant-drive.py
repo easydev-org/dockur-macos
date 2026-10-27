@@ -180,34 +180,96 @@ def main():
     mon = Monitor(mon_path + ".qmp")
     log("qmp connected via " + mon_path + ".qmp")
 
-    def locate_and_click(label, wait=10):
-        """Screenshot, click the densest accent band, then press Return.
+    def rows_in(ppm):
+        """Find text rows in a frame: (y_centre, x_centre, transitions).
 
-        The click selects (a row, a radio button); Return activates the pane's
-        default control. Clicking Continue directly does not work, because with
-        keyboard focus it is drawn as a ring rather than filled, and the ring's
-        centre is not the button.
+        Text is what a list is made of, and counting luminance transitions along a
+        scan line finds it without knowing anything about the theme. Measured on a
+        captured country pane:
+
+          y=325..382   heading "Select Your Country or Region"
+          y=427..451   first country row (1612 transitions - the brightest)
+          y=502..719   the rest of the list
+          y=797..824   the Back / Continue row
+
+        So the pane has a list starting near y=427 and buttons near y=810. Those two
+        bands are what this returns, rather than an accent-coloured box, because the
+        accent searches kept finding focus rings and icons instead of rows.
+        """
+        try:
+            with open(ppm, "rb") as fh:
+                if fh.readline().strip() != b"P6":
+                    return []
+                line = fh.readline()
+                while line.startswith(b"#"):
+                    line = fh.readline()
+                w, h = map(int, line.split())
+                if int(fh.readline()) != 255:
+                    return []
+                data = fh.read()
+        except Exception:
+            return []
+
+        found = []
+        band = None
+        for y in range(0, h):
+            n = 0
+            prev = None
+            base = y * w * 3
+            for x in range(0, w, 2):
+                i = base + x * 3
+                lum = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) // 1000
+                if prev is not None and abs(lum - prev) > 25:
+                    n += 1
+                prev = lum
+            if n > 6:
+                if band is None:
+                    band = [y, y, n]
+                else:
+                    band[1] = y
+                    band[2] = max(band[2], n)
+            elif band is not None:
+                found.append(tuple(band))
+                band = None
+        if band is not None:
+            found.append(tuple(band))
+        return found
+
+    def locate_and_click(label, wait=10):
+        """Click the first list row area, then press Return for the default button.
+
+        Return is what actually advances a pane: it activates the default control,
+        which is Continue/Agree/Next on every pane of this wizard. Clicking Continue
+        itself does not work - with keyboard focus it is drawn as a ring, and the
+        ring's centre is empty.
         """
         ppm = mon.shot(prefix + "-" + label)
         if not ppm:
             log("%s: no frame" % label)
             return None
-        bands = find_accent_bands(ppm, 100, W - 100)
-        if not bands:
-            log("%s: nothing accent-coloured on screen" % label)
-            return None
-        y0, y1, x0, x1, n, density = bands[0]
-        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
-        log("%s: densest band y=%d..%d x=%d..%d (%d px, %.0f%% full) -> click (%d,%d) then Return"
-            % (label, y0, y1, x0, x1, n, density * 100, cx, cy))
-        if density >= 0.25:
+        found = rows_in(ppm)
+        # Prefer the band that looks like the top of a list: a short band with many
+        # transitions in the upper half of the window.
+        pick = None
+        for y0, y1, n in found:
+            if 380 <= y0 <= 560 and 10 <= (y1 - y0) <= 60 and n > 100:
+                pick = (y0, y1, n)
+                break
+        if pick is None:
+            log("%s: no list row found among %s" % (label, found[:6]))
+        else:
+            y0, y1, n = pick
+            cx, cy = W // 2, (y0 + y1) // 2
+            log("%s: list row y=%d..%d (%d transitions) -> click (%d,%d)"
+                % (label, y0, y1, n, cx, cy))
             mon.click(cx, cy)
             time.sleep(1.5)
-        # Return activates the default button whether or not the click selected
-        # something - on panes that need no choice it is the only action needed.
+        # Return activates the pane's default button whether or not anything was
+        # selected, which covers both the panes that want a choice and the panes
+        # that only want to be accepted.
         qmpmod.key(mon.q, "ret")
         time.sleep(wait)
-        return (cx, cy)
+        return (W // 2, 810)
 
     def step(label, tries=3):
         """Make progress on the current pane; return the new signature or None."""
