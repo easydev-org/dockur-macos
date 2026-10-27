@@ -34,6 +34,11 @@ import qmp as qmpmod
 
 W, H = 1920, 1080
 
+# Where this wizard puts its forward control, measured from a frame: OCR read
+# "Continue" at (1306, 810). Every pane uses the same lower-right placement, so when
+# a pane's label cannot be read, this is where to click.
+PRIMARY_BUTTON = (1306, 810)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -265,6 +270,12 @@ def main():
     screen = Screen(qmp_socket + ".qmp")
     log("qmp connected")
 
+    def signature_from(_mon, _prefix, step):
+        """Read the pane's text again, for comparing before and after a click."""
+        again = screen.grab("%s-s%02d-after" % (prefix, step))
+        words = screen.text(again)
+        return (" ".join(w[0] for w in words)[:70]) or None
+
     # Let the guest finish drawing before the first read; OCR on a half-drawn pane
     # returns half the words.
     time.sleep(35)
@@ -386,30 +397,42 @@ def main():
 
         target, label = find_button(words)
 
-        # No button found. There are two quite different panes this can mean, and
-        # confusing them is what produced twenty steps of clicking "System" and
-        # "See" in the middle of a paragraph:
+        # No button was recognised. Click where the primary button sits anyway.
         #
-        #   the country list  - a real list, Continue grey until a row is chosen
-        #   a plain pane      - the control's label was not recognised, and the
-        #                       only safe action is the default one, Return
+        # Every pane of this wizard puts its forward control at the lower right, and
+        # a click there is harmless on a pane that has none: Continue was found at
+        # (1306,810) by OCR on one pane, and the accessibility pane's Not Now is in
+        # the same place but OCR never returns it - it reads the line as "Back Not
+        # Now", and no substring test survives that reliably.
         #
-        # So a list row is clicked only when the pane actually looks like a list:
-        # several capitalised words in the list band, stacked vertically. One or
-        # two such words is body copy, and clicking body copy is never right.
+        # The alternative was to look for a list and click a row, and that is exactly
+        # what went wrong: the accessibility pane's four category tiles (Vision,
+        # Motor, Hearing, Cognitive) pass any "looks like a list" test, so the driver
+        # spent twenty steps clicking Vision and Motor as if they were countries.
+        #
+        # Clicking the known button position first, and only then trying a row, fixes
+        # that ordering: the button is right where the wizard always puts it.
         if target is None:
+            log("step %d: no button recognised; clicking the primary button position"
+                % step)
+            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(mon, prefix, step)
+            if after is not None and after != sig:
+                log("step %d: that advanced the pane -> %s" % (step, after))
+                continue
+            # Still the same pane: it wants something selected. Click a row in the
+            # middle of the window, well away from the category tiles at the top.
             rows = find_list_rows(words)
-            if len(rows) >= 3:
-                row, row_label = rows[0]
-                log("step %d: no button; list of %d rows, clicking %r at %s"
-                    % (step, len(rows), row_label, row))
-                screen.click(row[0], row[1])
-                time.sleep(2)
-                screen.key("ret")
+            if rows:
+                pick = rows[len(rows) // 2]
+                log("step %d: unchanged; clicking row %r at %s" % (step, pick[1], pick[0]))
+                screen.click(pick[0][0], pick[0][1])
+                time.sleep(3)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                 time.sleep(8)
                 continue
-            log("step %d: no button and no list (%d candidates); pressing Return"
-                % (step, len(rows)))
+            log("step %d: unchanged and no rows; pressing Return" % step)
             screen.key("ret")
             time.sleep(8)
             continue
