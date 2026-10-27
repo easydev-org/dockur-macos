@@ -470,18 +470,34 @@ def main():
             # 2. Only then the primary position, which works on panes that need no
             #    choice at all - it is what carried the run through language,
             #    accessibility, privacy and migration.
+            # Click the primary position FIRST, before touching any row.
+            #
+            # The previous ordering selected a row and then pressed the button, which
+            # walked into the accessibility pane's Cognitive category and then spent
+            # several steps inside its sub-pages - "Speak Selection", "Typing
+            # Feedback", "Hover Text" - because clicking a category card opens that
+            # category rather than advancing the wizard. The pane's own forward
+            # control was there all along, in the usual place.
+            log("step %d: no button; clicking the primary button position" % step)
+            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(screen, prefix, step)
+            if after is not None and after != shortened:
+                log("step %d: that advanced the pane -> %s" % (step, after))
+                continue
+
+            # Only now try a row: this is the case of a pane whose forward button is
+            # disabled until a row is chosen, like the transfer pane. The lowest row
+            # is picked because option cards stack downward and the "don't" entry is
+            # last, while the topmost row on such a pane is the paragraph above them.
             rows_all = find_list_rows(words)
             if rows_all:
-                # Prefer the LOWEST row. On the transfer pane the options are cards
-                # stacked down the window and "Don't transfer any information now"
-                # is the last of them; the earlier code took the topmost row, which
-                # there is body text from the paragraph above the cards.
                 first = rows_all[-1]
-                log("step %d: no button; clicking first list row %r at %s"
+                log("step %d: unchanged; clicking list row %r at %s"
                     % (step, first[1], first[0]))
                 screen.click(first[0][0], first[0][1])
                 time.sleep(3)
-                log("step %d: then the primary button position" % step)
+                log("step %d: then the primary button position again" % step)
                 screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                 time.sleep(9)
                 after = signature_from(screen, prefix, step)
@@ -489,14 +505,6 @@ def main():
                     log("step %d: that advanced the pane -> %s" % (step, after))
                     continue
 
-            log("step %d: no button recognised; clicking the primary button position"
-                % step)
-            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
-            time.sleep(9)
-            after = signature_from(screen, prefix, step)
-            if after is not None and after != shortened:
-                log("step %d: that advanced the pane -> %s" % (step, after))
-                continue
             # Still the same pane: it wants something selected. Click a row in the
             # middle of the window, well away from the category tiles at the top.
             rows = find_list_rows(words)
