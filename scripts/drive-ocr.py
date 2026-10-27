@@ -45,20 +45,24 @@ class Screen:
         self.q = qmpmod.QMP(qmp_socket)
 
     def grab(self, stem):
-        """Screen dump + PNG, returning the PNG path."""
+        """Screen dump, returning the PPM path.
+
+        tesseract reads P6 PPM directly, so there is no conversion step to fail. An
+        earlier version converted to PNG with ppm2png.py via sys.executable, which
+        under sudo is a different interpreter than the one the script ran under; the
+        conversion silently produced nothing and every OCR call then read an empty
+        path and reported zero words.
+        """
         ppm = stem + ".ppm"
         reply = self.q.execute("screendump", filename=ppm)
         if "error" in reply:
+            print("[ocr] screendump error: %s" % reply["error"], flush=True)
             return None
-        time.sleep(1.2)
+        time.sleep(1.5)
         if not os.path.exists(ppm):
+            print("[ocr] no file at %s" % ppm, flush=True)
             return None
-        # Convert without ImageMagick: ppm2png.py is in this directory and the
-        # container writes plain P6.
-        png = stem + ".png"
-        sh([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                        "ppm2png.py"), ppm, png])
-        return png if os.path.exists(png) else None
+        return ppm
 
     def text(self, png):
         """OCR the frame into [(text, x_centre, y_centre, width, height)].
