@@ -180,52 +180,11 @@ jobs:
           # the bake wrote them next to the disk and they are not in the artifact.
           docker cp assets:/opencore/version ./oc-version 2>/dev/null || true
 
-          # Take qemu from this image rather than installing it. The Dockerfile
-          # copies qemu-system-x86_64 and /usr/share/qemu out of qemux/qemu-macos,
-          # so the binary and its firmware are both already here. Measured: apt
-          # spent 1154 seconds - nineteen minutes - fetching the same thing.
-          mkdir -p qemu qemu/lib
-          docker cp assets:/usr/bin/qemu-system-x86_64 qemu/qemu-system-x86_64
-          docker cp assets:/usr/share/qemu qemu/share
-
-          # The binary is dynamically linked against libraries the runner does not
-          # have; the first attempt at using it failed exactly there:
-          #   error while loading shared libraries: libcapstone.so.5
-          # Rather than guess which, ask the image for ldd output and copy every
-          # library it names. Then drop the non-system ones beside the binary and
-          # point LD_LIBRARY_PATH at them.
-          # NOTE: docker run takes an IMAGE, not a container name. Passing 'assets'
-          # - the name given to docker create above - makes docker try to pull an
-          # image called assets and answer
-          #   pull access denied for assets, repository does not exist
-          # which is the error that actually appeared, not a permissions problem.
-          docker run --rm --entrypoint sh "$IMG" \
-            -c 'ldd /usr/bin/qemu-system-x86_64 2>/dev/null' \
-            | awk '/=> \//{print $3} /^\t\//{print $1}' | sort -u > qemu/ldd.txt || true
-          echo "=== libraries qemu needs ==="
-          cat qemu/ldd.txt
-
-          while read -r lib; do
-            [ -n "$lib" ] || continue
-            base=$(basename "$lib")
-            # Copy every library the binary names, with one exception: the C library
-            # and the loader itself. Those must come from the host or nothing on it
-            # runs. Everything else - including a library the host happens to have
-            # under a different soname version, which is what broke this the second
-            # time (libjpeg.so.62 missing while the host carried a different major)
-            # - travels beside the binary.
-            case "$base" in
-              libc.so.*|libm.so.*|libpthread.so.*|libdl.so.*|librt.so.*|ld-linux*|libgcc_s.so.*)
-                continue ;;
-            esac
-            docker cp "assets:$lib" "qemu/lib/$base" 2>/dev/null || true
-          done < qemu/ldd.txt
-
-          docker rm -f assets >/dev/null || true
-          chmod +x qemu/qemu-system-x86_64
-          echo "=== copied libraries ==="
-          ls -la qemu/lib/ | head -20
-          LD_LIBRARY_PATH="$PWD/qemu/lib" ./qemu/qemu-system-x86_64 --version | head -1
+          # qemu is NOT copied out here any more. It runs inside this image in the
+          # drive step, where every library it links against already exists -
+          # copying the binary out was the source of the libcapstone and libjpeg
+          # failures, and the docker cp of the OpenCore version above is all this
+          # step needs from the image.
           cat oc-version 2>/dev/null || true
           ls -la vm/
 
@@ -281,6 +240,20 @@ jobs:
       # A check run's output.text has no such restriction: a plain GET with a
       # token reads it live. log-stream keeps that field current every few
       # seconds, which turns a 20-minute blind wait into something observable.
+      # Everything from here runs INSIDE the launcher image.
+      #
+      # This corrects a mistake that cost several rounds. Earlier versions copied
+      # qemu-system-x86_64 out of the image and ran it on the runner, which then
+      # failed one shared library at a time:
+      #   libcapstone.so.5, then libjpeg.so.62, and libc queued behind them.
+      # The image is a complete environment for exactly this binary; the runner is
+      # not, and rebuilding that environment dependency by dependency was never
+      # going to converge.
+      #
+      # The image is now used as intended: started with the disk bind-mounted and
+      # --entrypoint replaced by a shell, so qemu finds every library it links
+      # against. python3 is in the image too (its own patch.py needs it), so the
+      # driver runs there as well and the runner needs no setup at all.
       - name: boot and drive Setup Assistant
         uses: easydev-org/easyagent-github-ext/actions/log-stream@main
         with:
@@ -289,37 +262,28 @@ jobs:
           interval: "10"
           command: |
             set -eu
-            chmod +x scripts/boot-golden.sh scripts/setup-assistant-drive.py scripts/qmp.py
-            sudo -E bash scripts/boot-golden.sh \
-              "$GITHUB_WORKSPACE/vm" \
-              /tmp/monitor.sock 2400 &
-            BOOT=$!
-            sleep 60
+            IMG="${{ steps.vmimg.outputs.image }}"
+            mkdir -p frames
+            chmod 777 frames
 
-            # Prove the pointer responds before trusting the driver with twenty
-            # minutes of clicks. Two earlier attempts looked like they ran and
-            # changed nothing, so the guest state and one pointer move are stated
-            # up front instead of assumed.
-            echo "=== QMP reachable ==="
-            sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp status || true
-            sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp shot /tmp/qmp-a.ppm || true
-            sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp click 960 540 || true
-            sudo python3 scripts/qmp.py /tmp/monitor.sock.qmp shot /tmp/qmp-b.ppm || true
-            sudo chown "$(id -u):$(id -g)" /tmp/qmp-a.ppm /tmp/qmp-b.ppm 2>/dev/null || true
-            if cmp -s /tmp/qmp-a.ppm /tmp/qmp-b.ppm; then
-              echo "POINTER DID NOTHING"
-            else
-              echo "POINTER MOVED"
-            fi
+            # /dev/kvm exists on the runner but its group may not be applied yet.
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+            sudo udevadm control --reload-rules || true
+            sudo udevadm trigger --name-match=kvm || true
+            sudo chmod 666 /dev/kvm || true
 
-            sudo python3 scripts/setup-assistant-drive.py /tmp/monitor.sock "$GITHUB_WORKSPACE/frame" || true
+            chmod +x scripts/drive-in-container.sh
+            docker rm -f driver >/dev/null 2>&1 || true
+            docker run --rm --name driver \
+              --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+              --entrypoint sh \
+              -v "$GITHUB_WORKSPACE/vm:/vm" \
+              -v "$GITHUB_WORKSPACE/frames:/frames" \
+              -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+              "$IMG" /scripts/drive-in-container.sh
 
-            echo "=== frames collected ==="
-            ls -la frame-*.png 2>/dev/null | tail -20 || true
-
-            sudo pkill -9 -f "qemu-system-x86_64.*data.img" 2>/dev/null || true
-            wait "$BOOT" 2>/dev/null || true
-
+            echo "=== frames ==="
+            ls -la frames | tail -25 || true
 
       # The disk is the deliverable: if the wizard was completed, this is a disk
       # that boots straight to a desktop.
