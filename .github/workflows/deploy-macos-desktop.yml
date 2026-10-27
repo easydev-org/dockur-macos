@@ -95,7 +95,25 @@ jobs:
           oras version
           mkdir -p disk
           cd disk
-          oras pull "${{ github.event.inputs.golden_ref }}"
+          # Pull with retries, and with concurrency so the blob arrives in chunks
+          # rather than one long-lived HTTP/2 stream. A single stream for 11 GiB
+          # was interrupted mid-transfer:
+          #   copy failed: stream error: stream ID 3; PROTOCOL_ERROR; received from peer
+          # which is the registry closing a stalled stream, not an auth or missing
+          # blob problem. --concurrency asks for the blob in parts.
+          ok=0
+          for attempt in 1 2 3; do
+            echo "=== oras pull attempt $attempt ==="
+            if oras pull --concurrency 4 "${{ github.event.inputs.golden_ref }}"; then
+              ok=1
+              break
+            fi
+            # A partial file makes the next attempt fail differently; clear it.
+            rm -f data.qcow2 data.txt
+            sleep 20
+          done
+          [ "$ok" = "1" ] || { echo "::error::could not pull the golden disk after 3 attempts"; exit 1; }
+
           ls -la
           qemu-img info data.qcow2
           cat data.txt 2>/dev/null || true
