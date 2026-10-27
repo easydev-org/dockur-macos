@@ -163,9 +163,10 @@ def find_list_item(words):
     finds nothing and the run stalls. Clicking a row is what makes the button
     appear.
 
-    The window's list area is roughly y=400..760. A word there that starts with a
-    capital is a row label; the first one is the top row, which is as good a choice
-    as any when the goal is simply to have something selected.
+    The heading sits at y=325..382 and the list body at y=502..719, measured from a
+    captured country pane, so only 480..760 is searched. Including the heading row
+    picked the word "Select" out of "Select Your Country or Region" - a title, not
+    a row, and clicking it selected nothing.
     """
     best = None
     for text, x, y, w, h in words:
@@ -174,8 +175,8 @@ def find_list_item(words):
             continue
         if not clean[:1].isupper() or not clean.replace("&", "").replace("-", "").isalpha():
             continue
-        if 400 < y < 760:
-            if best is None or y < best[1][1]:
+        if 480 < y < 760:
+            if best is None or y < best[0][1]:
                 best = ((x, y), clean)
     return (best[0], best[1]) if best else (None, None)
 
