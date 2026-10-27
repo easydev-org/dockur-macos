@@ -583,12 +583,33 @@ def main():
             # Continuing here enables location services, which is harmless in a
             # container - there is no location to disclose - and it is the pane's own
             # forward control, unlike the Apple ID sheet which needed its inner button.
+            # Two stages under this heading, and they need different targets:
+            #
+            # 1. "Enable Location Services" - a full pane, forward control at the usual
+            #    primary position.
+            # 2. "Are you sure you don't want to use Location Services?" - the sheet
+            #    that appears after declining. Its buttons are inside the sheet, the
+            #    same geometry as the Apple ID one.
+            #
+            # The log for this run shows stage 1 working (the pane advanced at 19:02:16)
+            # and stage 2 then receiving primary clicks forever.
+            if "are you sure" in joined.lower():
+                log("step %d: location confirmation; clicking the sheet button" % step)
+                for lx, ly in (SHEET_SKIP, (899, 634), (1130, 700), (960, 700)):
+                    screen.click(lx, ly)
+                    time.sleep(8)
+                    now_at = signature_from(screen, prefix, step)
+                    if now_at is None or "are you sure" not in now_at.lower():
+                        log("step %d: confirmed at (%d,%d) -> %s" % (step, lx, ly, now_at))
+                        break
+                continue
+
             log("step %d: location services; clicking the primary button" % step)
             for lx, ly in (PRIMARY_BUTTON, (604, 810), (1222, 810)):
                 screen.click(lx, ly)
                 time.sleep(8)
                 now_at = signature_from(screen, prefix, step)
-                if now_at is None or "location services" not in now_at.lower():
+                if now_at is None or "enable location" not in now_at.lower():
                     log("step %d: dismissed at (%d,%d) -> %s" % (step, lx, ly, now_at))
                     break
             continue
