@@ -43,6 +43,11 @@ PRIMARY_BUTTON = (1306, 810)
 # appears in every pane diagnosis. Measured, not guessed.
 BACK_BUTTON = (1218, 810)
 
+# The migration pane's declining control, read off a screenshot of that pane:
+# "Not now" sits alone on the left of its button row, well away from Back and
+# Continue. OCR does not return it, so its position has to be known.
+NOT_NOW_BUTTON = (604, 810)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -438,6 +443,26 @@ def main():
         main.country_phase = None
 
         target, label = find_button(words)
+
+        # The migration pane has three controls on its button row:
+        #
+        #   Not now (604,810) | Back (1220,810) | Continue (1306,810)
+        #
+        # Continue opens the transfer sub-pane, which searches the network for a peer
+        # Mac and never finds one - a dead end that consumed many runs. "Not now" is
+        # the control that declines the whole migration, and it is a plain text button
+        # on the left, so OCR does not return it as a label and the position rule does
+        # not reach it either.
+        #
+        # Reading the pane as a screenshot is what found it: the three labels are
+        # legible in the image and invisible in the text extraction.
+        if "migration assistant" in joined.lower():
+            log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(screen, prefix, step)
+            log("step %d: after Not now -> %s" % (step, after))
+            continue
 
         # No button was recognised. Click where the primary button sits anyway.
         #
