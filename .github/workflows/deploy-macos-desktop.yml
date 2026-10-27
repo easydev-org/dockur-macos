@@ -124,6 +124,7 @@ jobs:
       # and the OpenCore image are taken from the launcher image, which builds them
       # from the same assets the bake used.
       - name: assemble the vm directory
+        id: vmimg
         run: |
           set -eux
           mkdir -p vm
@@ -146,6 +147,7 @@ jobs:
             docker pull "$IMG"
           fi
           echo "launcher: $IMG"
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
           # Fail here, not three steps later. When the image could not be pulled,
           # the next command that mentions 'assets' reports
           #   pull access denied for assets, repository does not exist
@@ -226,7 +228,7 @@ jobs:
             -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=Y \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
-            "$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)"
+            "${{ steps.vmimg.outputs.image }}"
 
           # boot.img, macos.rom and macos.vars appear within a minute; the guest
           # itself is not needed, so stop as soon as they are all present.
