@@ -322,26 +322,27 @@ def main():
                 time.sleep(8)
                 continue
 
-            # Type the WHOLE name, once, then Return.
+            # The country pane, in three phases, because RETURN DOES NOT ADVANCE IT.
             #
-            # Two earlier attempts got this wrong in instructive ways. Typing only
-            # "united" lands on United Arab Emirates - the first entry starting with
-            # those letters - and then pressing Down tried to walk from there and
-            # shot past United States entirely, ending up at U.S. Virgin Islands,
-            # Vanuatu, Vatican City. The log said so:
+            # Every pane so far has been advanced by clicking Continue - the one
+            # pane that did move, moved on a click at (1306,810). Return was assumed
+            # to work as the "default button" and never actually did; the log of the
+            # last run is return after return with the pane unchanged:
             #
-            #   step 29: ... US Viggin Islands Vanuatu Vatican Ci Ven
+            #   step 3: accepting the selected country (try 1)
+            #   step 4: same pane as last step (1 in a row)
+            #   step 5: the country pane will not accept Return; moving on
             #
-            # Re-clicking the list on every visit was the other mistake: it reset the
-            # selection to A each time, so the jump was thrown away and redone
-            # forever.
+            # So: type the full name to move the list, press Down once to commit the
+            # selection to the matched row, then click Continue.
             #
-            # A list widget matches progressively, so typing the full name lands on
-            # the wanted row directly. Key pressed exactly once, remembered on the
-            # function.
-            if not getattr(main, "country_typed", False):
-                log("step %d: focusing the list and typing %r"
-                    % (step, WANTED_COUNTRY[0]))
+            # Typing only "united" was the earlier mistake - it matches United Arab
+            # Emirates, not United States, and Down-walking from there overshot to
+            # U.S. Virgin Islands and Vanuatu.
+            phase = getattr(main, "country_phase", "type")
+
+            if phase == "type":
+                log("step %d: focusing the list and typing %r" % (step, WANTED_COUNTRY[0]))
                 rows = find_list_rows(words)
                 if rows:
                     screen.click(rows[0][0][0], rows[0][0][1])
@@ -350,20 +351,38 @@ def main():
                     screen.key("spc" if ch == " " else ch)
                     time.sleep(0.15)
                 time.sleep(2)
-                main.country_typed = True
-                main.country_tries = 0
+                # Down commits the selection to the row the typing matched.
+                screen.key("down")
+                time.sleep(2)
+                main.country_phase = "click"
                 continue
 
-            # Typing happened; accept whatever the list now has selected.
-            main.country_tries = getattr(main, "country_tries", 0) + 1
-            log("step %d: accepting the selected country (try %d)"
-                % (step, main.country_tries))
+            target, label = find_button(words)
+            if target is not None:
+                log("step %d: country chosen, clicking %r at %s" % (step, label, target))
+                screen.click(target[0], target[1])
+                time.sleep(8)
+                main.country_phase = None
+                continue
+
+            # Continue is not enabled, so nothing is selected. Click a row that is
+            # definitely visible - the middle of the list - which enables it.
+            rows = find_list_rows(words)
+            if rows:
+                pick = rows[len(rows) // 2]
+                log("step %d: Continue not enabled; clicking row %r at %s"
+                    % (step, pick[1], pick[0]))
+                screen.click(pick[0][0], pick[0][1])
+                time.sleep(2)
+                continue
+            log("step %d: country pane has no rows and no button; pressing Return" % step)
             screen.key("ret")
             time.sleep(8)
-            if main.country_tries >= 3:
-                log("step %d: the country pane will not accept Return; moving on" % step)
-                main.country_typed = None
             continue
+
+        # Any pane that is not the country list clears its state, so a later return
+        # to it starts from the top instead of resuming a half-finished sequence.
+        main.country_phase = None
 
         target, label = find_button(words)
 
