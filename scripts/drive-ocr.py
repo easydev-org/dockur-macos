@@ -594,14 +594,30 @@ def main():
             # The log for this run shows stage 1 working (the pane advanced at 19:02:16)
             # and stage 2 then receiving primary clicks forever.
             if "are you sure" in joined.lower():
-                log("step %d: location confirmation; clicking the sheet button" % step)
-                for lx, ly in (SHEET_SKIP, (899, 634), (1130, 700), (960, 700)):
+                # The sheet's button is not where it is on the Apple ID sheet - that
+                # one was measured at (1026,634) and worked, this one has not moved on
+                # four attempts. Rather than guess again, a wider set of candidates is
+                # tried including the main button row, since this dialog may be
+                # positioned differently.
+                log("step %d: location confirmation; sweeping sheet candidates" % step)
+                tries = getattr(main, "loc_sheet", 0)
+                spots = (PRIMARY_BUTTON, SHEET_SKIP, (899, 634), (1306, 700),
+                         (1222, 810), (960, 700), (1130, 660), (1306, 750),
+                         (1100, 700), (1000, 660))
+                if tries < len(spots):
+                    lx, ly = spots[tries]
+                    main.loc_sheet = tries + 1
+                    log("step %d: candidate (%d,%d) [%d/%d]"
+                        % (step, lx, ly, tries + 1, len(spots)))
                     screen.click(lx, ly)
                     time.sleep(8)
                     now_at = signature_from(screen, prefix, step)
                     if now_at is None or "are you sure" not in now_at.lower():
                         log("step %d: confirmed at (%d,%d) -> %s" % (step, lx, ly, now_at))
-                        break
+                        main.loc_sheet = 0
+                else:
+                    log("step %d: every candidate missed; resetting the sweep" % step)
+                    main.loc_sheet = 0
                 continue
 
             log("step %d: location services; clicking the primary button" % step)
