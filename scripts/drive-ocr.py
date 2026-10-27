@@ -135,13 +135,21 @@ class Screen:
 # "...you can set this up later", OCR returned the word "later", the driver clicked
 # the sentence, and it looped on that pane for nineteen steps. The control there is
 # "Not Now" - a phrase, not a word that appears in prose.
-BUTTONS = ("continue", "agree", "accept", "not now", "don't sign in",
-           "do not sign in", "set up later", "start using", "get started",
-           "allow", "enable", "next", "done", "ok",
+BUTTONS = ("continue", "continue with an apple account", "agree", "accept",
+           "not now", "don't sign in", "do not sign in",
+           "set up later", "start using", "get started",
            # The transfer pane's forward control, which is not a Continue: it
-           # declines the migration. Without it the run clicks the primary position
-           # forever on that pane.
-           "don't transfer", "do not transfer", "not now, don't transfer")
+           # declines the migration. Without it, the run clicks the primary position
+           # on that pane forever.
+           "don't transfer", "do not transfer",
+           # The data & privacy pane.
+           "only continue", "continue")
+
+# Single common words used to live in this list - "enable", "allow", "next", "ok",
+# "done" - and every one of them appears in ordinary prose. The data & privacy pane
+# reads "You can enable only features you trust", and the driver clicked the phrase
+# "enable only features," at (855,557) as if it were a button. A label has to be
+# something that only a control would say.
 
 
 def find_button(words):
