@@ -322,23 +322,43 @@ def main():
                 time.sleep(8)
                 continue
 
-            # The wanted name is not fully on screen - usually because the row sits
-            # at the bottom edge, only partly visible. Typing jumps the list and
-            # leaves the matching row selected, so Return is enough; clicking a
-            # half-visible row at y=709 did nothing at all, twice.
-            log("step %d: typing %r to jump the list, then Return"
-                % (step, WANTED_COUNTRY[0]))
-            rows = find_list_rows(words)
-            if rows:
-                # Focus the list without relying on which row is under the pointer.
-                screen.click(rows[0][0][0], rows[0][0][1])
-                time.sleep(1)
-            for ch in WANTED_COUNTRY[0].split()[0].lower():
-                screen.key(ch)
-                time.sleep(0.2)
-            time.sleep(2)
-            screen.key("ret")
-            time.sleep(8)
+            # The wanted row is at the bottom edge, half cut off, so clicking it does
+            # nothing. Keyboard only, and only once:
+            #
+            # The earlier version typed every time it came back to this pane, and
+            # each attempt re-clicked the list to focus it - which reset the
+            # selection to A and threw away the previous jump. The log shows it
+            # plainly: T, T, T, T for ten steps and never once a United States.
+            #
+            # So the jump is done once, then Down is pressed to walk from whatever
+            # the jump landed on to the wanted row, reading the list each time. If
+            # the row never comes into view, Return is pressed anyway rather than
+            # looping forever.
+            if not getattr(main, "country_jumped", False):
+                log("step %d: focusing the list and typing %r"
+                    % (step, WANTED_COUNTRY[0].split()[0]))
+                rows = find_list_rows(words)
+                if rows:
+                    screen.click(rows[0][0][0], rows[0][0][1])
+                    time.sleep(1)
+                for ch in WANTED_COUNTRY[0].split()[0].lower():
+                    screen.key(ch)
+                    time.sleep(0.2)
+                time.sleep(2)
+                main.country_jumped = True
+                main.country_misses = 0
+                continue
+
+            # The jump is done; nudge down towards the wanted entry.
+            main.country_misses = getattr(main, "country_misses", 0) + 1
+            log("step %d: nudging down (%d)" % (step, main.country_misses))
+            screen.key("down")
+            time.sleep(1.5)
+            if main.country_misses >= 8:
+                log("step %d: giving up on %r; accepting whatever is selected"
+                    % (step, WANTED_COUNTRY[0]))
+                screen.key("ret")
+                time.sleep(8)
             continue
 
         target, label = find_button(words)
