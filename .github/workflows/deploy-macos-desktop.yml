@@ -40,6 +40,12 @@ on:
 permissions:
   contents: read
   actions: read
+  # packages: read is what allows pulling the golden disk and the launcher image
+  # from ghcr with the workflow token. Without it the pull is denied and the
+  # failure surfaces far from its cause: 'docker create' then reports
+  # 'pull access denied for assets', which reads like a missing container name
+  # rather than a permissions problem.
+  packages: read
   # checks: write is what lets log-stream create and update the check run it
   # streams into. Without it the action answers:
   #   cannot create a check run (403): Resource not accessible by integration
@@ -140,7 +146,16 @@ jobs:
             docker pull "$IMG"
           fi
           echo "launcher: $IMG"
-          docker create --name assets "$IMG" >/dev/null
+          # Fail here, not three steps later. When the image could not be pulled,
+          # the next command that mentions 'assets' reports
+          #   pull access denied for assets, repository does not exist
+          # which points at the container name instead of the pull.
+          docker rm -f assets >/dev/null 2>&1 || true
+          if ! docker create --name assets "$IMG" >/dev/null; then
+            echo "::error::could not create a container from $IMG - is it published and readable?"
+            docker images | head -5
+            exit 1
+          fi
           # Whatever firmware and OpenCore image exist in the image are reused;
           # the bake wrote them next to the disk and they are not in the artifact.
           docker cp assets:/opencore/version ./oc-version 2>/dev/null || true
@@ -159,7 +174,14 @@ jobs:
           # Rather than guess which, ask the image for ldd output and copy every
           # library it names. Then drop the non-system ones beside the binary and
           # point LD_LIBRARY_PATH at them.
-          docker run --rm --entrypoint sh assets -c 'ldd /usr/bin/qemu-system-x86_64 2>/dev/null'             | awk '/=> \//{print $3} /^	\//{print $1}' | sort -u > qemu/ldd.txt || true
+          # NOTE: docker run takes an IMAGE, not a container name. Passing 'assets'
+          # - the name given to docker create above - makes docker try to pull an
+          # image called assets and answer
+          #   pull access denied for assets, repository does not exist
+          # which is the error that actually appeared, not a permissions problem.
+          docker run --rm --entrypoint sh "$IMG" \
+            -c 'ldd /usr/bin/qemu-system-x86_64 2>/dev/null' \
+            | awk '/=> \//{print $3} /^\t\//{print $1}' | sort -u > qemu/ldd.txt || true
           echo "=== libraries qemu needs ==="
           cat qemu/ldd.txt
 
