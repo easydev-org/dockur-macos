@@ -464,7 +464,14 @@ def main():
             # frame of the region showed what it was. The way out is Back - the same
             # (1218,810) that OCR reads correctly on every pane that has it - and then
             # the card that declines the transfer.
-            if "looking for" in joined.lower() or "other server" in joined.lower():
+            # "Other Server..." only exists on the search sub-pane. "Looking for
+            # other sources" does NOT work as a marker: that sentence is printed as
+            # body text on the transfer pane itself, so the check matched the pane the
+            # loop was supposed to move past. Twenty-one steps went:
+            #
+            #   Transfer pane -> (misread as search) -> Back -> Migration Assistant
+            #   -> Continue -> Transfer pane -> ...
+            if "other server" in joined.lower():
                 log("step %d: inside the search sub-pane; clicking Back" % step)
                 screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
                 time.sleep(8)
@@ -495,6 +502,22 @@ def main():
                 log("step %d: pane text for diagnosis: %s"
                     % (step, " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
                                         for w in sorted(words, key=lambda w: (w[2], w[1])))))
+
+            # The transfer pane: two cards side by side in the middle, "From a Mac,
+            # Time Machine Backup, or Startup Disk" on the left and "To another Mac"
+            # on the right. Neither has readable text where the card itself is, and
+            # its Continue stays grey until one is chosen. Clicking the LEFT card is
+            # the one that leads somewhere: the right card opens the network search
+            # sub-pane, which can never succeed in a container.
+            if "transfer information" in joined.lower():
+                log("step %d: transfer pane; clicking the left card" % step)
+                screen.click(int(W * 0.38), int(H * 0.47))
+                time.sleep(3)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(9)
+                after = signature_from(screen, prefix, step)
+                log("step %d: after the left card -> %s" % (step, after))
+                continue
             # A pane whose button row OCR cannot read. Two things are worth trying,
             # in this order, and the order matters:
             #
