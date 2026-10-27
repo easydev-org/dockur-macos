@@ -39,6 +39,10 @@ W, H = 1920, 1080
 # a pane's label cannot be read, this is where to click.
 PRIMARY_BUTTON = (1306, 810)
 
+# Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
+# appears in every pane diagnosis. Measured, not guessed.
+BACK_BUTTON = (1218, 810)
+
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, shell=isinstance(cmd, str), capture_output=True,
@@ -451,6 +455,30 @@ def main():
         # Clicking the known button position first, and only then trying a row, fixes
         # that ordering: the button is right where the wizard always puts it.
         if target is None:
+            # A search sub-pane: "Looking for other sources..." with a spinner and an
+            # "Other Server..." link. This is not the transfer pane itself, it is what
+            # clicking one of its cards opens, and it searches for a peer that will
+            # never appear in a container.
+            #
+            # Sixteen steps were spent clicking into that spinner before a cropped
+            # frame of the region showed what it was. The way out is Back - the same
+            # (1218,810) that OCR reads correctly on every pane that has it - and then
+            # the card that declines the transfer.
+            if "looking for" in joined.lower() or "other server" in joined.lower():
+                log("step %d: inside the search sub-pane; clicking Back" % step)
+                screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+                time.sleep(8)
+                after = signature_from(screen, prefix, step)
+                log("step %d: after Back -> %s" % (step, after))
+                # Now on the transfer pane: choose the card that declines, which is
+                # the lower one of the pair, then accept.
+                log("step %d: clicking the lower card, then the primary button" % step)
+                screen.click(W // 2, int(H * 0.56))
+                time.sleep(3)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(9)
+                continue
+
             # Print every word OCR found, once per pane. When a pane resists, the
             # only way to fix it is to see what the screen actually says; reasoning
             # about it from the driver's choices has produced three wrong guesses in
