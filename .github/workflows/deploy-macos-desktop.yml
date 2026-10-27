@@ -299,7 +299,11 @@ jobs:
             done
             ls -la frames/ || true
 
-            python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
+            # The socket is created by root inside the container, so connecting to
+            # it needs the same side of the boundary: without this the driver dies
+            # on PermissionError at connect(), having read nothing.
+            sudo python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
+            sudo chown -R "$(id -u):$(id -g)" frames || true
 
             echo "=== frames ==="
             ls -la frames | tail -25 || true
