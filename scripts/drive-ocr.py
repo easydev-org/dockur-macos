@@ -261,7 +261,10 @@ def find_list_rows(words):
             continue
         if not clean.replace("&", "").replace("-", "").replace(" ", "").isalpha():
             continue
-        if 480 < y < 760:
+        # 480..790: the list body of the country pane sits at 502..719, and the
+        # option cards on the transfer pane extend to about 710. Stopping at 760 cut
+        # the bottom card off, and 800 is the button row, which must stay excluded.
+        if 480 < y < 790:
             rows.append(((x, y), clean))
     rows.sort(key=lambda r: r[0][1])
     return rows
