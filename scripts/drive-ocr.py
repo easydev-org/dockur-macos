@@ -79,7 +79,16 @@ class Screen:
         """
         if not png:
             return []
-        out = sh(["tesseract", png, "stdout", "--psm", "11", "tsv"]).stdout
+        # --psm 3 is the default automatic page segmentation. --psm 11 (sparse
+        # text) was tried first and returned nothing at all on a frame that
+        # demonstrably contains a list of country names - it treats isolated words
+        # as noise when there is no obvious paragraph. If OCR still returns nothing,
+        # say so with the raw stderr, because 'no words' has more than one cause.
+        proc = sh(["tesseract", png, "stdout", "--psm", "3", "tsv"])
+        out = proc.stdout
+        if not out.strip():
+            print("[ocr] tesseract produced no output; stderr: %s"
+                  % (proc.stderr.strip()[:300] or "(empty)"), flush=True)
         words = []
         for line in out.splitlines()[1:]:
             parts = line.split("\t")

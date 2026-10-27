@@ -271,6 +271,12 @@ jobs:
             # job, and reading the screen is what every coordinate guess here was
             # missing.
             sudo apt-get install -y -qq tesseract-ocr
+            # Prove OCR works before the driver depends on it. A silent OCR failure
+            # reads exactly like a blank screen, and that cost two runs.
+            tesseract --version | head -1
+            printf 'Continue
+' > /tmp/ocrtest.txt
+            sudo python3 -c "import subprocess; print(subprocess.run(['tesseract','/tmp/ocrtest.txt','stdout'],capture_output=True,text=True).stdout.strip())"
 
             # /dev/kvm exists on the runner but its group may not be applied yet.
             echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
