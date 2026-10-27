@@ -185,6 +185,22 @@ def find_button(words):
     if best is not None:
         return (best[1], best[2])
 
+    # Position beats text on the button row.
+    #
+    # This wizard puts its forward control at (1306,810) on every pane, and OCR
+    # reads the label with varying success - Continue, "Conique", "Contlnue". The
+    # diagnosis output from a failing pane showed it plainly:
+    #
+    #   Back@1225,810 | |@1267,812 | Conique@1306,814
+    #
+    # Back was read correctly and the button beside it was not, although its
+    # position is unambiguous. So a word in the button row at the primary position's
+    # x is treated as the primary button whatever it looks like - the position is the
+    # reliable part.
+    for text, x, y, w, h in words:
+        if y > H * 0.72 and abs(x - PRIMARY_BUTTON[0]) <= 60:
+            return ((x, y), text)
+
     # No single word matched. Multi-word labels arrive split, and buttons that sit
     # side by side arrive joined, so neither "starts with" nor "whole line" is the
     # right test.
