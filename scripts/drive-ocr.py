@@ -417,7 +417,7 @@ def main():
                 % step)
             screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
             time.sleep(9)
-            after = signature_from(mon, prefix, step)
+            after = signature_from(screen, prefix, step)
             if after is not None and after != sig:
                 log("step %d: that advanced the pane -> %s" % (step, after))
                 continue
