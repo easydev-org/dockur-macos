@@ -122,21 +122,36 @@ class Screen:
 
 # Words that mean "advance". Matched case-insensitively against OCR output, since
 # OCR is not reliable about case.
-ADVANCE = ("continue", "agree", "accept", "next", "ok", "allow", "enable",
-           "not now", "later", "skip", "done", "start using", "get started",
-           "set up later", "don't sign in", "do not sign in")
+# Button words. Deliberately short: every entry has to be something that only
+# appears on a control, never in body copy, or OCR will match the prose and the
+# click lands on nothing.
+#
+# "later" was in this list and did exactly that. The accessibility pane reads
+# "...you can set this up later", OCR returned the word "later", the driver clicked
+# the sentence, and it looped on that pane for nineteen steps. The control there is
+# "Not Now" - a phrase, not a word that appears in prose.
+BUTTONS = ("continue", "agree", "accept", "not now", "don't sign in",
+           "do not sign in", "set up later", "start using", "get started",
+           "allow", "enable", "next", "done", "ok")
 
 
-def find_advance(words):
-    """The button to press, preferring lower-right (that is where Continue lives)."""
+def find_button(words):
+    """Pick a control, preferring the lower-right corner where Continue lives.
+
+    y is required to be in the bottom fifth of the screen. On every pane of this
+    wizard the buttons are there, and insisting on it means body text can never be
+    mistaken for a control even when a phrase matches.
+    """
     best = None
     for text, x, y, w, h in words:
         low = text.lower().strip(" .,:;")
-        if any(low == a or low.startswith(a) for a in ADVANCE):
-            # Prefer right-most, then lowest - Continue is bottom-right.
-            score = (x > W * 0.5, y)
-            if best is None or score > best[0]:
-                best = (score, (x, y), text)
+        if not any(low == b or low.startswith(b) for b in BUTTONS):
+            continue
+        if y < H * 0.80:
+            continue
+        score = (x, y)
+        if best is None or score > best[0]:
+            best = (score, (x, y), text)
     return (best[1], best[2]) if best else (None, None)
 
 
@@ -170,11 +185,34 @@ def main():
     # returns half the words.
     time.sleep(35)
 
-    for step in range(1, 25):
+    # Track the pane, so being stuck is detected rather than repeated.
+    #
+    # The previous run clicked the word "later" in a sentence on the accessibility
+    # pane for nineteen consecutive steps, and nothing in the log said so - each
+    # line looked like progress. The fix is to remember what the pane said and act
+    # differently when it says the same thing twice.
+    previous = None
+    stuck = 0
+
+    for step in range(1, 30):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
-        log("step %d: %d words: %s" % (step, len(words),
-                                      " | ".join(w[0] for w in words[:12])))
+        joined = " ".join(w[0] for w in words)
+        shortened = joined[:70]
+        log("step %d: %s" % (step, shortened or "(nothing readable)"))
+
+        if shortened and shortened == previous:
+            stuck += 1
+            log("step %d: same pane as last step (%d in a row)" % (step, stuck))
+        else:
+            stuck = 0
+        previous = shortened
+
+        # A desktop has a menu bar; the wizard always shows a button near the bottom.
+        low = joined.lower()
+        if "finder" in low and "continue" not in low:
+            log("DESKTOP REACHED at step %d" % step)
+            break
 
         if not words:
             log("step %d: nothing readable; pressing Return" % step)
@@ -182,17 +220,12 @@ def main():
             time.sleep(8)
             continue
 
-        # A desktop has a menu bar and a Dock; the wizard always has a button.
-        joined = " ".join(w[0].lower() for w in words)
-        if "finder" in joined and "continue" not in joined:
-            log("DESKTOP REACHED at step %d" % step)
-            break
+        target, label = find_button(words)
 
-        target, label = find_advance(words)
-        if target is None:
-            target, label = find_country(words)
-        if target is None:
-            log("step %d: no target word; pressing Return" % step)
+        # Stuck on a pane: the button text was probably misread, so press Return -
+        # the default button - rather than clicking the same wrong spot again.
+        if target is None or stuck >= 2:
+            log("step %d: no usable button (stuck=%d); pressing Return" % (step, stuck))
             screen.key("ret")
             time.sleep(8)
             continue
