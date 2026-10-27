@@ -24,10 +24,18 @@ name: deploy-macos-desktop
 on:
   workflow_dispatch:
     inputs:
+      golden_ref:
+        description: "OCI ref of the golden disk (oras artifact in ghcr)"
+        required: false
+        default: "ghcr.io/easydev-org/golden-macos:14"
+      launcher_image:
+        description: "Launcher image to take qemu and the OpenCore assets from"
+        required: false
+        default: "ghcr.io/easydev-org/dockur-macos-launcher:14"
       artifact_run:
-        description: "Run id holding the macos-golden artifact"
-        required: true
-        default: "40304160694"
+        description: "Fallback: run id holding macos-golden and macos-image-fixed"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -64,13 +72,31 @@ jobs:
                       /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
           df -h / | tail -1
 
-      - name: fetch the baked disk
+      # Pull the disk from the registry, not from an Actions artifact.
+      #
+      # Measured on this repo for the same 11.8 GiB file: 1498 seconds as an
+      # artifact (and once over 1085 without finishing), 333 seconds as an oras
+      # pull from ghcr. The artifact path redirects to Azure blob storage and its
+      # rate is not something a workflow can influence; the registry serves from a
+      # CDN. ghcr is also where easysandbox-macos expects the golden disk to live,
+      # so this is the production path rather than a shortcut around one.
+      - name: pull the golden disk from ghcr
+        if: github.event.inputs.artifact_run == ''
         run: |
           set -eux
+          curl -sSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin oras
+          oras version
           mkdir -p disk
-          echo "artifact run: ${{ github.event.inputs.artifact_run }}"
+          cd disk
+          oras pull "${{ github.event.inputs.golden_ref }}"
+          ls -la
+          qemu-img info data.qcow2
+          cat data.txt 2>/dev/null || true
 
+      # Fallback, for a disk that has not been published yet.
       - uses: actions/download-artifact@v4
+        if: github.event.inputs.artifact_run != ''
         with:
           name: macos-golden
           path: disk
@@ -79,6 +105,7 @@ jobs:
           run-id: ${{ github.event.inputs.artifact_run }}
 
       - uses: actions/download-artifact@v4
+        if: github.event.inputs.artifact_run != ''
         with:
           name: macos-image-fixed
           path: img
@@ -100,8 +127,18 @@ jobs:
           qemu-img convert -O raw "$f" vm/data.img
           du -h vm/data.img
 
-          docker load -i img/image.tar
-          IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)
+          # The launcher image comes from the registry when the disk did, and from
+          # the artifact tarball when that fallback is in use. Either way it is the
+          # source of qemu, its libraries, and the OpenCore config the bake used.
+          if [ -f img/image.tar ]; then
+            docker load -i img/image.tar
+            IMG=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)
+          else
+            IMG="${{ github.event.inputs.launcher_image }}"
+            echo "${{ secrets.GITHUB_TOKEN }}" \
+              | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            docker pull "$IMG"
+          fi
           echo "launcher: $IMG"
           docker create --name assets "$IMG" >/dev/null
           # Whatever firmware and OpenCore image exist in the image are reused;

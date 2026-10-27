@@ -116,3 +116,31 @@ jobs:
           oras pull "$REPO:$TAG"
           ls -la
           qemu-img info data.qcow2
+
+      # The launcher image travels too. deploy-macos-desktop needs it for qemu, its
+      # shared libraries, and the OpenCore config, and pulling it from the registry
+      # is the same argument as for the disk: 640 MB through a CDN against a
+      # per-run artifact download.
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-image-fixed
+          path: img
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.artifact_run }}
+
+      - name: publish the launcher image
+        run: |
+          set -eux
+          docker load -i img/image.tar
+          SRC=$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -m1 dockur-macos-fixed)
+          DEST="ghcr.io/easydev-org/dockur-macos-launcher:${{ github.event.inputs.tag }}"
+
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$SRC" "$DEST"
+          docker push "$DEST"
+
+          # Read it back, so 'pushed' is checked rather than assumed.
+          docker pull "$DEST"
+          docker image inspect "$DEST" --format 'launcher ready: {{.Id}}'
