@@ -430,6 +430,15 @@ def main():
         # Clicking the known button position first, and only then trying a row, fixes
         # that ordering: the button is right where the wizard always puts it.
         if target is None:
+            # Print every word OCR found, once per pane. When a pane resists, the
+            # only way to fix it is to see what the screen actually says; reasoning
+            # about it from the driver's choices has produced three wrong guesses in
+            # a row (Vision/Motor tiles, "System"/"See" prose, and now "Looking"
+            # from a sentence about Time Machine).
+            if stuck == 0:
+                log("step %d: pane text for diagnosis: %s"
+                    % (step, " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
+                                        for w in sorted(words, key=lambda w: (w[2], w[1])))))
             # A pane whose button row OCR cannot read. Two things are worth trying,
             # in this order, and the order matters:
             #
@@ -445,7 +454,11 @@ def main():
             #    accessibility, privacy and migration.
             rows_all = find_list_rows(words)
             if rows_all:
-                first = rows_all[0]
+                # Prefer the LOWEST row. On the transfer pane the options are cards
+                # stacked down the window and "Don't transfer any information now"
+                # is the last of them; the earlier code took the topmost row, which
+                # there is body text from the paragraph above the cards.
+                first = rows_all[-1]
                 log("step %d: no button; clicking first list row %r at %s"
                     % (step, first[1], first[0]))
                 screen.click(first[0][0], first[0][1])
