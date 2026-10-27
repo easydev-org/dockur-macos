@@ -58,10 +58,10 @@ qemu-system-x86_64 \
   -device usb-tablet \
   -netdev user,id=hostnet0 \
   -device virtio-net-pci,id=net0,netdev=hostnet0,romfile=,mac=00:16:CB:53:E9:8C \
-  -drive file=/data.img,id=data3,format=raw,cache=none,aio=native,discard=unmap,detect-zeroes=on,if=none \
+  -drive file="$VMDIR/data.img",id=data3,format=raw,cache=none,aio=native,discard=unmap,detect-zeroes=on,if=none \
   -device virtio-blk-pci,drive=data3,bus=pcie.0,addr=0xa,iothread=io2,bootindex=3 \
   -object iothread,id=io2 \
-  -drive file=/boot.img,id=OpenCore,format=raw,cache=unsafe,readonly=on,if=none \
+  -drive file="$VMDIR/boot.img",id=OpenCore,format=raw,cache=unsafe,readonly=on,if=none \
   -device virtio-blk-pci,drive=OpenCore,bus=pcie.0,addr=0x5,bootindex=9 \
   -rtc base=utc \
   -smbios type=2 \
@@ -69,8 +69,8 @@ qemu-system-x86_64 \
   -global ICH9-LPC.disable_s4=1 \
   -global ICH9-LPC.acpi-pci-hotplug-with-bridge-support=off \
   -device isa-applesmc,osk='ourhardworkbythesewordsguardedpleasedontsteal(c)AppleComputerInc' \
-  -drive if=pflash,format=raw,readonly=on,file=/macos.rom \
-  -drive if=pflash,format=raw,file=/macos.vars \
+  -drive if=pflash,format=raw,readonly=on,file="$VMDIR/macos.rom" \
+  -drive if=pflash,format=raw,file="$VMDIR/macos.vars" \
   -object rng-random,id=objrng0,filename=/dev/urandom \
   -device virtio-rng-pci,rng=objrng0,id=rng0,bus=pcie.0 \
   -device virtio-balloon-pci,id=balloon0,bus=pcie.0 \
