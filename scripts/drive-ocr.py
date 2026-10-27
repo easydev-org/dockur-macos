@@ -168,34 +168,34 @@ def find_button(words):
     if best is not None:
         return (best[1], best[2])
 
-    # No single word matched: rebuild phrases from words that sit on one line in the
-    # button band, left to right, and try the labels against those.
+    # No single word matched. Multi-word labels arrive split, and buttons that sit
+    # side by side arrive joined, so neither "starts with" nor "whole line" is the
+    # right test.
+    #
+    # The accessibility pane's controls OCR as "Back Not Now" on one line: Back is a
+    # different button, and the run ended up clicking Back or nothing. Matching every
+    # consecutive run of one to three words against the labels finds "Not Now" inside
+    # that line and clicks its centre, which is where the button actually is.
     band = [w for w in words if w[2] > H * 0.60]
     band.sort(key=lambda w: (w[2], w[1]))
-    line = []
-    def flush():
-        if not line:
-            return None
-        phrase = " ".join(w[0] for w in line).strip(" .,:;")
-        lowp = phrase.lower()
-        if any(lowp == b or lowp.startswith(b) for b in BUTTONS):
-            xs = [w[1] for w in line]
-            ys = [w[2] for w in line]
-            return ((sum(xs) // len(xs), sum(ys) // len(ys)), phrase)
-        return None
-    prev_y = None
-    for w in band:
-        if prev_y is not None and abs(w[2] - prev_y) > 12:
-            hit = flush()
-            if hit:
-                return hit
-            line = []
-        line.append(w)
-        prev_y = w[2]
-    if line:
-        hit = flush()
-        if hit:
-            return hit
+
+    def same_line(a, b):
+        return abs(a[2] - b[2]) <= 14
+
+    for start in range(len(band)):
+        for length in (3, 2, 1):
+            chunk = band[start:start + length]
+            if len(chunk) != length:
+                continue
+            if any(not same_line(chunk[0], w) for w in chunk[1:]):
+                continue
+            phrase = " ".join(w[0] for w in chunk).strip(" .,:;").lower()
+            if not any(phrase == b or phrase.startswith(b) for b in BUTTONS):
+                continue
+            xs = [w[1] for w in chunk]
+            ys = [w[2] for w in chunk]
+            return ((sum(xs) // len(xs), sum(ys) // len(ys)),
+                    " ".join(w[0] for w in chunk))
     return (None, None)
 
 
