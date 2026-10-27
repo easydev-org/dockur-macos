@@ -59,6 +59,11 @@ class Monitor:
     def click(self, x, y):
         qmpmod.click(self.q, x, y)
 
+    def key(self, ch):
+        """Type one character through QMP. qmpmod key() takes a QKeyCode name,
+        which for a lowercase letter or digit is the character itself."""
+        qmpmod.key(self.q, ch)
+
     def close(self):
         self.q.close()
 
@@ -114,7 +119,8 @@ def main():
     COUNTRY_ROW = (W // 2 - 200, 430)
     CONTINUE = (W // 2 + 300, H - 190)
 
-    def advance(label, tries=5, wait=9):
+    def advance(label, tries=3, wait=9):
+        """Click Continue until the pane changes, and return the new signature."""
         before = signature(mon, prefix + "-" + label + "-before")
         for attempt in range(1, tries + 1):
             mon.click(CONTINUE[0], CONTINUE[1])
@@ -122,9 +128,47 @@ def main():
             after = signature(mon, prefix + "-" + label + "-try%d" % attempt)
             log("%s attempt %d: before=%s after=%s" % (label, attempt, before, after))
             if before != after:
-                return True
-        log("%s: screen never changed after %d clicks" % (label, tries))
-        return False
+                return after
+            before = after
+        return None
+
+    def is_desktop(sig):
+        """Tell a real desktop from a Setup Assistant pane by colour count.
+
+        Measured on this guest: Setup Assistant panes sit around 400 colours at 63%
+        dominant, while the frames that were genuinely a full UI measured 34444 at
+        22.9% and 34684 at 19.2%. Two orders of magnitude apart, so the threshold
+        does not need to be delicate.
+        """
+        if not sig:
+            return False
+        distinct, dominant = sig
+        return (distinct is not None and dominant is not None
+                and distinct > 5000 and dominant < 50.0)
+
+    def fill_account():
+        """Type into the account creation form.
+
+        Click each field rather than tabbing: tab order on that pane is not
+        guaranteed and a stray focus makes the whole form wrong in a way that only
+        shows up as a failed run.
+        """
+        fields = [
+            ("full name", (W // 2 - 100, 400), "Sandbox"),
+            ("account name", (W // 2 - 100, 470), "sandbox"),
+            ("password", (W // 2 - 100, 540), "sandbox"),
+            ("verify", (W // 2 - 100, 610), "sandbox"),
+            ("hint", (W // 2 - 100, 680), "hint"),
+        ]
+        for label, (x, y), text in fields:
+            log("account: " + label)
+            mon.click(x, y)
+            time.sleep(0.6)
+            for ch in text:
+                mon.key(ch)
+                time.sleep(0.12)
+            time.sleep(0.4)
+        log("account form filled")
 
     # Let the wizard settle; clicking into a half-drawn window loses the click.
     time.sleep(25)
@@ -136,13 +180,21 @@ def main():
     log("after row click: %s" % (signature(mon, prefix + "-001"),))
     advance("country")
 
-    # The remaining panes accept their defaults, so Continue is all they need.
-    for i in range(2, 12):
-        ok = advance("pane%d" % i)
-        log("pane %d advanced=%s" % (i, ok))
+    # Walk the wizard. Most panes accept the default click; the account form needs
+    # typing, and the only way to tell them apart without parsing the screen is to
+    # click and watch. A pane that refuses clicks twice is the form.
+    for i in range(2, 16):
+        sig = advance("pane%d" % i)
+        if sig is None:
+            log("pane %d did not advance; assuming it wants typed input" % i)
+            fill_account()
+            sig = advance("pane%d-after" % i)
+        if is_desktop(sig):
+            log("DESKTOP REACHED at pane %d: %s" % (i, sig))
+            signature(mon, prefix + "-desktop")
+            break
+        log("pane %d now at %s" % (i, sig))
 
     log("done; the caller inspects the frames")
     mon.close()
-
-
 main()

@@ -301,9 +301,10 @@ jobs:
         with:
           name: deploy-frames
           path: |
-            frame-*.png
-            frame-*.ppm
-            frame-drive.log
+            # The container writes into frames/, which is the bind mount. The
+            # earlier paths here said frame-* and matched nothing, so a run that
+            # produced dozens of screenshots uploaded no screenshots at all.
+            frames/**
           if-no-files-found: warn
           retention-days: 14
 
