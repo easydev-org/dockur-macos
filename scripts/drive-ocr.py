@@ -442,35 +442,46 @@ def enable_ssh_from_desktop(screen, log, prefix):
     time.sleep(10)
     screen.grab(prefix + "-terminal")
 
-    # ONE command, ONE sudo, and only characters proven to survive this channel.
+    # Type commands as SEPARATE lines, not one line joined by semicolons.
     #
-    # What arrived on an earlier attempt:
+    # Two things are established by the frames now:
     #
-    #   echo admin | sudo -S launchctl enable system/com.openssh.sshd; launchctl load ...
-    #   Load failed: 5: Input/output error
-    #   You need administrator access to run this tool... exiting!
+    #   systemsetup -setremotelogin on   runs, prints nothing, changes nothing.
+    #   It is TCC-protected: without Full Disk Access for Terminal it fails
+    #   silently, which is why the probe still says refused.
     #
-    # The single quotes and the pipe survived; the double quotes around the bash -c
-    # argument did not, so the command list fell apart at the first semicolon and only
-    # the first entry ran under sudo.
+    #   Anything beyond letters, spaces, digits, a dash, a slash and a pipe does
+    #   NOT survive this channel - double quotes vanished, 2>&1 vanished, && 
+    #   vanished. So no shell metacharacters, and no semicolon chains.
     #
-    # systemsetup -setremotelogin on is the whole job by itself, so the line is just
-    # that behind one sudo: letters, spaces, a dash and a pipe.
-    line = "echo %s | sudo -S systemsetup -setremotelogin on" % ACCOUNT_PASS
-    for ch in line:
-        if ch == " ":
-            screen.key("spc")
-        elif ch == "|":
-            screen.key("shift-backslash")
-        elif ch == "-":
-            screen.key("minus")
-        else:
-            screen.key(ch)
-        time.sleep(0.15)
-    screen.key("ret")
-    time.sleep(22)
+    # launchctl load as root needs no TCC grant, so it is the route now. The first
+    # line lists the daemon directory so the frame shows the real filename if the
+    # guess is wrong; the second line loads it.
+    def send(text):
+        for ch in text:
+            if ch == " ":
+                screen.key("spc")
+            elif ch == "|":
+                screen.key("shift-backslash")
+            elif ch == "-":
+                screen.key("minus")
+            elif ch == "/":
+                screen.key("slash")
+            elif ch == ".":
+                screen.key("dot")
+            else:
+                screen.key(ch)
+            time.sleep(0.15)
+        screen.key("ret")
+        time.sleep(6)
+
+    send("ls /System/Library/LaunchDaemons")
+    screen.grab(prefix + "-daemons")
+
+    send("echo %s | sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist" % ACCOUNT_PASS)
+    time.sleep(16)
     screen.grab(prefix + "-ssh-cmd")
-    log("ssh command issued at %r" % line)
+    log("ssh commands issued; see the two frames")
     return True
 
 
