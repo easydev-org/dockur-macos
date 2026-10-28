@@ -432,97 +432,88 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user=None):
 
 
 def enable_ssh_from_desktop(screen, log, prefix):
-    """Turn remote login on from inside the running system, using its own Terminal.
+    """Turn remote login on by clicking System Settings, not by typing a command.
 
-    WHY NOT A LAUNCHDAEMON. firstboot.sh has the sshd setup, but it runs once at first
-    boot before any account exists, and deletes itself. On this disk the account is
-    created later, by this driver, at the Setup Assistant - so that daemon had already
-    run and gone. The probe says so plainly: tcp 2222 refused, nothing listening.
+    WHY NOT THE KEYBOARD. Typing a command through QMP was tried nine ways and failed
+    each time for a different reason, all of them measured from frames:
 
-    WHY THE GUI IS THE ROUTE. There is no other way in: no sshd, no shared folder, no
-    serial console. Opening Terminal and typing is what a person would do, and it is
-    also the only channel there is.
+      sudo -S launchctl load ...   arrived as "sudo -s", path cut at /system/libra/
+      launchctl list | grep ssh    arrived with a backslash where the pipe should be
+      .../launchdaemons/ssh.plist  arrived as ".../launchdaemons", filename dropped
+
+    Shift chords drop keys, the pipe does not exist, long lines get truncated. Each fix
+    exposed the next. Clicking is a different channel: it moves a pointer and never has
+    to reproduce a character exactly.
+
+    WHY THE SEARCH FIELD IS SAFE. Spotlight takes "sharing" - six lowercase letters,
+    no shift, no punctuation - and macOS indexes the Sharing pane of System Settings
+    under it, so the pane opens directly without hunting through the sidebar.
+
+    Then Remote Login is found by reading the screen, not by a fixed coordinate, and
+    its switch is toggled. Both are ordinary clicks.
     """
-    def spotlight_pane_seen():
-        """True when a screenshot shows something other than a bare desktop."""
-        ppm = screen.grab(prefix + "-spotlight-try")
-        words = screen.text(ppm)
-        return bool(words)
-
-    # Cmd-Space, checked, and retried. On one run it opened Spotlight; on the next it
-    # did nothing at all and the three frames - spotlight, terminal, ssh-cmd - were
-    # byte-identical desktops. A chord sent just as the desktop finishes drawing is
-    # simply lost, so this tries a few times and confirms with a screenshot instead of
-    # assuming the first attempt worked.
-    opened = False
-    for attempt in (1, 2, 3):
-        qmpmod.key_combo(screen.q, "meta_l", "spc")
-        time.sleep(3)
-        if spotlight_pane_seen():
-            opened = True
-            log("spotlight opened on attempt %d" % attempt)
-            break
-        log("spotlight not visible after attempt %d" % attempt)
-    if not opened:
-        log("spotlight never opened; ssh cannot be enabled this way")
+    def open_spotlight():
+        for attempt in (1, 2, 3):
+            qmpmod.key_combo(screen.q, "meta_l", "spc")
+            time.sleep(3)
+            if screen.text(screen.grab(prefix + "-spotlight-try")):
+                log("spotlight opened on attempt %d" % attempt)
+                return True
+            log("spotlight not visible after attempt %d" % attempt)
         return False
 
-    # Type the search term, then confirm the Terminal window appeared before sending
-    # anything into it. Typing a command into a Spotlight box that never opened would
-    # go nowhere and look like an ssh failure.
-    for ch in "terminal":
-        screen.key(ch)
-        time.sleep(0.15)
+    def find_words(png):
+        return screen.text(png)
+
+    if not open_spotlight():
+        log("ssh: spotlight never opened; cannot reach System Settings")
+        return False
+
+    # "sharing" is the whole search term: lowercase, short, and it lands on the pane
+    # that holds Remote Login.
+    screen.type("sharing", delay=0.18)
     time.sleep(2.5)
     screen.key("ret")
-    time.sleep(10)
-    screen.grab(prefix + "-terminal")
+    time.sleep(12)
+    png = screen.grab(prefix + "-sharing")
 
-    # Type commands as SEPARATE lines, not one line joined by semicolons.
-    #
-    # Two things are established by the frames now:
-    #
-    #   systemsetup -setremotelogin on   runs, prints nothing, changes nothing.
-    #   It is TCC-protected: without Full Disk Access for Terminal it fails
-    #   silently, which is why the probe still says refused.
-    #
-    #   Anything beyond letters, spaces, digits, a dash, a slash and a pipe does
-    #   NOT survive this channel - double quotes vanished, 2>&1 vanished, && 
-    #   vanished. So no shell metacharacters, and no semicolon chains.
-    #
-    # launchctl load as root needs no TCC grant, so it is the route now. The first
-    # line lists the daemon directory so the frame shows the real filename if the
-    # guess is wrong; the second line loads it.
-    # Three separate constraints, each measured from a frame:
-    #
-    #   1. shift chords drop keys. "sudo -S launchctl load ..." arrived as
-    #      "sudo -s" with the path cut at "/system/libra/".
-    #   2. The pipe does not exist on this channel. "launchctl list | grep ssh"
-    #      arrived as "launchctl list \ grep ssh", so there is no way to pipe.
-    #   3. Long lines get cut. ".../launchdaemons/ssh.plist" arrived as
-    #      ".../launchdaemons" and was submitted without the filename.
-    #
-    # So: no capitals, no pipes, and nothing long. The daemon is loaded in two short
-    # steps - cd into its directory, then load the file by name - and verification is
-    # the external TCP probe rather than a shell pipeline.
+    words = find_words(png)
+    log("sharing pane text: %s" % " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
+                                              for w in sorted(words, key=lambda w: (w[2], w[1])))[:600])
 
-    def send(text, wait=6):
-        screen.type(text)
+    # Remote Login is the row to click. Its label is two words, so the row is found by
+    # looking for "remote" and taking that position - the switch sits to its right.
+    target = None
+    for w in words:
+        if w[0].strip(":,").lower() == "remote":
+            target = (w[1], w[2])
+            log("found Remote Login label at %s" % (target,))
+            break
+
+    if target is None:
+        log("ssh: Remote Login row is not on screen; the pane may need scrolling")
+        return False
+
+    # Click the switch, which is right of the label. A click on the label itself only
+    # selects the row.
+    switch = (target[0] + 300, target[1])
+    log("clicking the Remote Login switch at %s" % (switch,))
+    screen.click(switch[0], switch[1])
+    time.sleep(6)
+    screen.grab(prefix + "-ssh-toggled")
+
+    # Turning it on raises an administrator prompt; type the password and confirm.
+    after = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
+    joined = " ".join(w[0] for w in after).lower()
+    log("after toggle: %s" % " ".join(w[0] for w in after)[:200])
+    if "password" in joined or "administrator" in joined:
+        log("administrator prompt; typing the password")
+        screen.type(ACCOUNT_PASS, delay=0.2)
         time.sleep(1)
         screen.key("ret")
-        time.sleep(wait)
+        time.sleep(6)
+        screen.grab(prefix + "-ssh-confirmed")
 
-    send("cd /system/library/launchdaemons", wait=4)
-    send("sudo launchctl load -w ssh.plist", wait=4)
-    # sudo asks for the password now.
-    send(ACCOUNT_PASS, wait=14)
-    screen.grab(prefix + "-ssh-cmd")
-
-    # Say out loud whether it took, using a command short enough to survive and with
-    # no pipe. "launchctl list" alone is long output, so ask for the job by name.
-    send("sudo launchctl print system/com.openssh.sshd", wait=8)
-    screen.grab(prefix + "-ssh-check")
-    log("ssh commands issued; see the frames")
     return True
 
 
