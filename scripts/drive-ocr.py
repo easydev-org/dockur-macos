@@ -750,12 +750,27 @@ def main():
                     # the first character, and a full name of "Docker" came out as
                     # "ocker". The password and its verification then disagreed - 5
                     # dots against 6 - which is why Continue refused the form.
-                    # A retry is any pass after the first, tracked on the function.
-                    if getattr(main, "account_passes", 0) > 0:
+                    # Clear the field on EVERY pass, thoroughly.
+                    #
+                    # The frame from the last run shows why: Full name docker was
+                    # right, both password fields held five dots and matched, and only
+                    # Account name was wrong - "dockerdocker". The retry appended to
+                    # the value the first pass had left, because Cmd-A followed by
+                    # backspace does not always take on these fields.
+                    #
+                    # Three methods in sequence, with a pause after each: Cmd-A and
+                    # backspace, again, then a run of backspaces. The field starts empty,
+                    # so this costs nothing on the first pass and it cannot leave stale
+                    # text behind on a retry.
+                    for _ in range(2):
                         qmpmod.key_combo(screen.q, "meta_l", "a")
-                        time.sleep(0.9)
+                        time.sleep(0.7)
                         screen.key("backspace")
-                        time.sleep(0.9)
+                        time.sleep(0.7)
+                    for _ in range(24):
+                        screen.key("backspace")
+                        time.sleep(0.05)
+                    time.sleep(1.0)
 
                     for ch in value:
                         screen.key(ch)
