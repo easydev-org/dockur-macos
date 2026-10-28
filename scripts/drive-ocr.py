@@ -493,22 +493,40 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # launchctl load as root needs no TCC grant, so it is the route now. The first
     # line lists the daemon directory so the frame shows the real filename if the
     # guess is wrong; the second line loads it.
-    def send(text, wait=8):
-        # screen.type handles capitals as real shift chords. The hand-rolled loop that
-        # used to live here passed every character to the keycode channel unchanged,
-        # so /System/Library/LaunchDaemons went in as a lowercase path - which is
-        # exactly the "No such file or directory" the frame showed.
+    # NOTHING here uses shift. Measured across frames:
+    #
+    #   ls /System/Library/LaunchDaemons        worked - only 2 capitals, early
+    #   sudo -S launchctl load -w /System/...   arrived as "sudo -s" with the
+    #                                           path at "/system/libra/"
+    #
+    # so shift chords drop keys on this channel once a line carries several of them.
+    # The fix is to stop needing them:
+    #
+    #   - macOS APFS is case-insensitive, so every path can be typed in lowercase
+    #   - sudo -S becomes plain sudo, with the password typed at the prompt instead
+    #
+    # The result is a line with no capitals at all.
+
+    def send(text, wait=6):
         screen.type(text)
         time.sleep(1)
         screen.key("ret")
         time.sleep(wait)
 
-    send("ls /System/Library/LaunchDaemons")
-    screen.grab(prefix + "-daemons")
+    # Everything lowercase: the command, and the daemon path, which APFS resolves
+    # regardless of case.
+    send("sudo launchctl load -w /system/library/launchdaemons/ssh.plist", wait=5)
 
-    send("echo %s | sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist" % ACCOUNT_PASS, wait=20)
+    # sudo now asks for a password, so type it and press Return. No pipe, no -S flag,
+    # no capitals.
+    send(ACCOUNT_PASS, wait=15)
     screen.grab(prefix + "-ssh-cmd")
-    log("ssh commands issued; see the two frames")
+
+    # Verify from inside, with a command that also has no capitals: if sshd is up,
+    # launchctl prints the job number.
+    send("launchctl list | grep ssh", wait=8)
+    screen.grab(prefix + "-ssh-check")
+    log("ssh commands issued; see the frames")
     return True
 
 
