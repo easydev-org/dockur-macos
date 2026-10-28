@@ -567,6 +567,26 @@ def main():
 
         low = joined.lower()
 
+        # The login window, which the published desktop disk boots into.
+        #
+        # The baked disk arrived at Setup Assistant, so the driver only ever knew how
+        # to walk a wizard. A disk that has already been driven boots to a login
+        # window instead: "docker / Your password is required to log in". Nine steps
+        # were spent clicking the primary position at it, which is a window with no
+        # buttons there.
+        #
+        # Password only: the account is selected and the field already has focus, so
+        # typing goes into it. Return submits.
+        if "password is required" in low or ("your password" in low and "log in" in low):
+            log("step %d: login window; typing the account password" % step)
+            screen.type(ACCOUNT_PASS, delay=0.2)
+            time.sleep(1)
+            screen.key("ret")
+            time.sleep(14)
+            log("step %d: after login -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
+
         # Keyboard Setup Assistant first, BEFORE the desktop check.
         #
         # It appears on top of the desktop itself - the guest has no Apple keyboard to
@@ -600,14 +620,18 @@ def main():
         # Only now: a desktop has a menu bar and no wizard button.
         if "finder" in low and "continue" not in low:
             log("DESKTOP REACHED at step %d" % step)
-            # Stop here. The desktop is the deliverable of this run, and the workflow
-            # publishes the disk when it sees this line in the log.
+            # The desktop is reached. Now enable remote login by CLICKING, not typing.
             #
-            # The ssh step that used to run here is deliberately gone: it was the only
-            # part still failing, it made every run end on a red note, and it is being
-            # solved separately. Getting a disk that boots to a desktop into the
-            # registry first turns every later attempt into a six-minute run instead of
-            # a twenty-five minute one.
+            # Every attempt to type a shell command into Terminal failed, each for a
+            # different measured reason - shift chords dropped keys, the pipe arrived as
+            # a backslash, long lines lost their tails. A click does not have to
+            # reproduce a character, so none of that applies: Spotlight takes the word
+            # "sharing", System Settings opens on the pane that holds Remote Login, and
+            # the switch is found by reading the screen.
+            enable_ssh_from_desktop(screen, log, prefix)
+            probe_ssh(log)
+            # The workflow publishes the disk when it sees DESKTOP REACHED in the log,
+            # so this run ships a desktop disk whether or not the switch was found.
             break
 
         if not words:
