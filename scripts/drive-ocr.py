@@ -493,19 +493,18 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # launchctl load as root needs no TCC grant, so it is the route now. The first
     # line lists the daemon directory so the frame shows the real filename if the
     # guess is wrong; the second line loads it.
-    # NOTHING here uses shift. Measured across frames:
+    # Three separate constraints, each measured from a frame:
     #
-    #   ls /System/Library/LaunchDaemons        worked - only 2 capitals, early
-    #   sudo -S launchctl load -w /System/...   arrived as "sudo -s" with the
-    #                                           path at "/system/libra/"
+    #   1. shift chords drop keys. "sudo -S launchctl load ..." arrived as
+    #      "sudo -s" with the path cut at "/system/libra/".
+    #   2. The pipe does not exist on this channel. "launchctl list | grep ssh"
+    #      arrived as "launchctl list \ grep ssh", so there is no way to pipe.
+    #   3. Long lines get cut. ".../launchdaemons/ssh.plist" arrived as
+    #      ".../launchdaemons" and was submitted without the filename.
     #
-    # so shift chords drop keys on this channel once a line carries several of them.
-    # The fix is to stop needing them:
-    #
-    #   - macOS APFS is case-insensitive, so every path can be typed in lowercase
-    #   - sudo -S becomes plain sudo, with the password typed at the prompt instead
-    #
-    # The result is a line with no capitals at all.
+    # So: no capitals, no pipes, and nothing long. The daemon is loaded in two short
+    # steps - cd into its directory, then load the file by name - and verification is
+    # the external TCP probe rather than a shell pipeline.
 
     def send(text, wait=6):
         screen.type(text)
@@ -513,18 +512,15 @@ def enable_ssh_from_desktop(screen, log, prefix):
         screen.key("ret")
         time.sleep(wait)
 
-    # Everything lowercase: the command, and the daemon path, which APFS resolves
-    # regardless of case.
-    send("sudo launchctl load -w /system/library/launchdaemons/ssh.plist", wait=5)
-
-    # sudo now asks for a password, so type it and press Return. No pipe, no -S flag,
-    # no capitals.
-    send(ACCOUNT_PASS, wait=15)
+    send("cd /system/library/launchdaemons", wait=4)
+    send("sudo launchctl load -w ssh.plist", wait=4)
+    # sudo asks for the password now.
+    send(ACCOUNT_PASS, wait=14)
     screen.grab(prefix + "-ssh-cmd")
 
-    # Verify from inside, with a command that also has no capitals: if sshd is up,
-    # launchctl prints the job number.
-    send("launchctl list | grep ssh", wait=8)
+    # Say out loud whether it took, using a command short enough to survive and with
+    # no pipe. "launchctl list" alone is long output, so ask for the job by name.
+    send("sudo launchctl print system/com.openssh.sshd", wait=8)
     screen.grab(prefix + "-ssh-check")
     log("ssh commands issued; see the frames")
     return True
