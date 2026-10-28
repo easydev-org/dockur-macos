@@ -83,11 +83,20 @@ SHEET_SKIP = (1026, 634)
 # The guessed version stacked all five vertically at y=470..710, so Password and
 # Verify were never both filled, and Continue kept answering "You haven't provided
 # all of the requested information".
+# The account this wizard creates. It has to match src/install.sh's SETUP_USERNAME /
+# SETUP_PASSWORD, which the first-boot daemon uses for the same account: two different
+# names for one machine is a trap, and it is what the previous run shipped - the
+# framework said admin/admin while the form said sandbox/sandbox.
+#
+# Read from the environment so the workflow sets it in one place.
+ACCOUNT_USER = os.environ.get("SETUP_USERNAME", "user")
+ACCOUNT_PASS = os.environ.get("SETUP_PASSWORD", "admin")
+
 ACCOUNT_FIELDS = (
-    ("full name", 942, 455, "Sandbox"),
-    ("account name", 942, 486, "sandbox"),
-    ("password", 896, 528, "sandbox"),
-    ("verify", 1057, 528, "sandbox"),
+    ("full name", 942, 455, ACCOUNT_USER.capitalize()),
+    ("account name", 942, 486, ACCOUNT_USER),
+    ("password", 896, 528, ACCOUNT_PASS),
+    ("verify", 1057, 528, ACCOUNT_PASS),
     ("hint", 978, 562, "hint"),
 )
 
@@ -345,7 +354,7 @@ def find_wanted_country(words):
     return None, None
 
 
-def probe_ssh(log, host="127.0.0.1", port=2222, user="sandbox"):
+def probe_ssh(log, host="127.0.0.1", port=2222, user=None):
     """Say whether remote login is reachable, and log the evidence either way.
 
     QEMU forwards the guest's port 22 to 2222 on the host, and firstboot.sh enables
@@ -357,6 +366,7 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user="sandbox"):
     way to supply a password, and failing that check would say nothing about the setup.
     """
     import socket as _socket
+    user = user or ACCOUNT_USER
 
     def tcp_open():
         s = _socket.socket()
@@ -383,6 +393,67 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user="sandbox"):
     else:
         log("ssh probe: port %d is open but the banner is not an ssh one" % port)
     return True
+
+
+def enable_ssh_from_desktop(screen, log, prefix):
+    """Turn remote login on from inside the running system, using its own Terminal.
+
+    WHY NOT A LAUNCHDAEMON. firstboot.sh already contains the sshd setup, but it runs
+    once, before any account exists, and deletes itself. On this disk the account is
+    created later, by this driver, at the Setup Assistant - so that daemon had already
+    run and gone by the time there was a user to log in as, and ssh was never enabled.
+    The probe says so plainly: tcp 2222 refused, nothing listening.
+
+    WHY THE GUI IS THE ROUTE. There is no other way in: the guest has no sshd yet, no
+    shared folder, and no serial console. Opening Terminal and typing is how a person
+    would do it, and it is also the only channel available.
+
+    Spotlight opens Terminal; the command enables remote login and grants the account
+    access, then reports what it did so the log says whether it worked.
+    """
+    log("enabling ssh from the desktop")
+
+    # Cmd-Space opens Spotlight, which is faster and more reliable than hunting for
+    # Terminal in the Dock.
+    qmpmod.key_combo(screen.q, "meta_l", "spc")
+    time.sleep(2.5)
+    screen.grab(prefix + "-spotlight")
+
+    for ch in "terminal":
+        screen.key(ch)
+        time.sleep(0.12)
+    time.sleep(2)
+    screen.key("ret")
+    time.sleep(8)
+    screen.grab(prefix + "-terminal")
+
+    # A single line: sudo is not needed for launchctl on the sshd job as long as the
+    # account is an admin, but sudo is used anyway so the command does not depend on
+    # group membership. -S reads the password from stdin, fed by the echo.
+    command = (
+        "sudo -S launchctl enable system/com.openssh.sshd; "
+        "sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist; "
+        "sudo -S systemsetup -setremotelogin on; "
+        "netstat -an | grep -c '\\.22 '; echo SSH-DONE"
+    )
+    for ch in "echo %s | sudo -S bash -c \"%s\"" % (ACCOUNT_PASS, command):
+        if ch == " ":
+            screen.key("spc")
+        elif ch in "\"'":
+            screen.key("apostrophe" if ch == "'" else "shift-apostrophe")
+        elif ch in "|;.\\-/":
+            screen.key({"|": "shift-backslash", ";": "semicolon", ".": "dot",
+                        "\\": "backslash", "-": "minus", "/": "slash"}[ch])
+        elif ch.isupper():
+            screen.key("shift-" + ch.lower())
+        else:
+            screen.key(ch)
+        time.sleep(0.06)
+    time.sleep(1)
+    screen.key("ret")
+    time.sleep(10)
+    screen.grab(prefix + "-ssh-cmd")
+    log("ssh command issued; see the frame for its output")
 
 
 def main():
@@ -471,6 +542,12 @@ def main():
             # Report whether remote login came up, so the run says what it got rather
             # than only that a desktop appeared. sshd is enabled by firstboot.sh and
             # forwarded by qemu's hostfwd to the host's port 2222.
+            #
+            # Enabling it first: the probe on the previous run found nothing listening,
+            # because the daemon that was supposed to do this had already run before
+            # any account existed. Turning it on from the desktop is the only channel
+            # left, and then the probe reports whether that worked.
+            enable_ssh_from_desktop(screen, log, prefix)
             probe_ssh(log)
             break
 

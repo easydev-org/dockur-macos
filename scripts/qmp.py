@@ -109,6 +109,25 @@ def key(q, qcode):
         {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
 
 
+def key_combo(q, *qcodes):
+    """Press several keys together, e.g. key_combo(q, "meta_l", "spc") for Cmd-Space.
+
+    QMP delivers held state, so a chord is the modifiers down, the key down and up,
+    then the modifiers up in reverse order. Sending them as separate presses - which
+    is what key() does - produces Cmd, release, Space, release, which macOS reads as
+    two unrelated keystrokes rather than a shortcut.
+    """
+    for qcode in qcodes:
+        q.execute("input-send-event", events=[
+            {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}}])
+        time.sleep(0.05)
+    time.sleep(0.1)
+    for qcode in reversed(qcodes):
+        q.execute("input-send-event", events=[
+            {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
+        time.sleep(0.05)
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)

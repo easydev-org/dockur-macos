@@ -27,7 +27,7 @@ BASE_IMG="$STORAGE/setup.dmg"
 # Fixed setup values for the unattended-install proof. These are intentionally
 # not environment variables yet; locale settings will be implemented only
 # after the basic zero-click path has been proven.
-SETUP_USERNAME="admin"
+SETUP_USERNAME="user"
 SETUP_PASSWORD="admin"
 SETUP_AUTOLOGIN="Y"
 SETUP_LANGUAGE="en-US"
