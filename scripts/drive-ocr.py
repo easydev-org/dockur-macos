@@ -537,24 +537,34 @@ def enable_ssh_from_desktop(screen, log, prefix):
     SWITCH_X = 1234
 
     def find_row(tag):
+        """Locate the Remote LOGIN row, not the Remote MANAGEMENT one.
+
+        OCR breaks both labels into a bare word "Remote" followed by a second word,
+        so matching "remote" alone picks whichever comes first - Remote Management,
+        one row above. That is what opened the Remote Management popover twice:
+
+            Remote Login row at (818,288); clicking the switch at (1234,288)
+
+        and 288 is the Management row. The distinguishing word is on the SAME LINE, so
+        the pair is matched by line: a "remote" with a "login" beside it at the same
+        y. Sidebar hits are skipped by x, since the search result shows the same words
+        near x=660.
+        """
         pngx = screen.grab(prefix + "-row-" + tag)
-        best = None
-        for w in screen.text(pngx):
-            head = w[0].strip(":,").lower()
-            # "Remote login" and "Remote Login" both appear depending on the pane.
-            if head in ("remote", "remote login"):
-                # ONLY the content area. The sidebar shows the same words in the
-                # search results near x=660, and taking the topmost match picked that
-                # one: the log says "Remote Login row at (659,265); clicking the
-                # switch at (1234,265)" - a switch coordinate borrowed from a sidebar
-                # entry, on a line where the content area has nothing.
-                #
-                # The pane's own rows live right of the sidebar divider, so x>800.
-                if w[1] <= 800:
-                    continue
-                if best is None or w[2] < best[1]:
-                    best = (w[1], w[2])
-        return best
+        words_here = screen.text(pngx)
+        remotes = [w for w in words_here
+                   if w[0].strip(":,").lower() == "remote" and w[1] > 800]
+        logins = [w for w in words_here
+                  if w[0].strip(":,").lower().startswith("log") and w[1] > 800]
+        for r in sorted(remotes, key=lambda w: w[2]):
+            for l in logins:
+                if abs(l[2] - r[2]) <= 14:
+                    return (r[1], r[2])
+        # Fall back to the single named row, if OCR returned it unsplit.
+        for w in words_here:
+            if w[0].strip(":,").lower() == "remote login" and w[1] > 800:
+                return (w[1], w[2])
+        return None
 
     row = find_row("after-navigate")
     if row is None:
