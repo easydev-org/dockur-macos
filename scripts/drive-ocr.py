@@ -177,10 +177,46 @@ class Screen:
     def key(self, name):
         qmpmod.key(self.q, name)
 
-    def type(self, text):
+    # Characters that need a specific QKeyCode rather than the letter itself.
+    SHIFTED = {
+        "|": "backslash", "!": "1", "@": "2", "#": "3", "$": "4",
+        "%": "5", "^": "6", "&": "7", "*": "8", "(": "9", ")": "0",
+        "_": "minus", "+": "equal", "{": "bracket_left",
+        "}": "bracket_right", ":": "semicolon", '"': "apostrophe",
+        "<": "comma", ">": "dot", "?": "slash", "~": "grave_accent",
+    }
+    PLAIN = {
+        " ": "spc", "-": "minus", "=": "equal", "/": "slash",
+        ".": "dot", ",": "comma", ";": "semicolon", "'": "apostrophe",
+        "\\": "backslash", "[": "bracket_left", "]": "bracket_right",
+        "`": "grave_accent",
+    }
+
+    def type(self, text, delay=0.12):
+        """Type text as real key events, including capitals and punctuation.
+
+        WHY THIS EXISTS. Earlier versions passed the character straight to the
+        keycode channel and, for capitals, sent "shift-s" - which is not a QKeyCode
+        at all. The frames show the result: `ls /System/Library/LaunchDaemons` arrived
+        as a lowercase path and answered 'No such file or directory', and every command
+        beginning with a capital - systemsetup, launchctl - was quietly mangled.
+
+        A capital is shift held with the letter, so it is sent as a chord.
+        """
         for ch in text:
-            qmpmod.key(self.q, ch)
-            time.sleep(0.1)
+            if ch.isupper():
+                qmpmod.key_combo(self.q, "shift_l", ch.lower())
+            elif ch in self.SHIFTED:
+                qmpmod.key_combo(self.q, "shift_l", self.SHIFTED[ch])
+            elif ch in self.PLAIN:
+                qmpmod.key(self.q, self.PLAIN[ch])
+            elif ch.isalnum():
+                qmpmod.key(self.q, ch)
+            else:
+                # Anything unmapped is skipped rather than guessed at, so a missing
+                # character shows up as a wrong command instead of a silently altered one.
+                continue
+            time.sleep(delay)
 
     def close(self):
         self.q.close()
@@ -457,29 +493,20 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # launchctl load as root needs no TCC grant, so it is the route now. The first
     # line lists the daemon directory so the frame shows the real filename if the
     # guess is wrong; the second line loads it.
-    def send(text):
-        for ch in text:
-            if ch == " ":
-                screen.key("spc")
-            elif ch == "|":
-                screen.key("shift-backslash")
-            elif ch == "-":
-                screen.key("minus")
-            elif ch == "/":
-                screen.key("slash")
-            elif ch == ".":
-                screen.key("dot")
-            else:
-                screen.key(ch)
-            time.sleep(0.15)
+    def send(text, wait=8):
+        # screen.type handles capitals as real shift chords. The hand-rolled loop that
+        # used to live here passed every character to the keycode channel unchanged,
+        # so /System/Library/LaunchDaemons went in as a lowercase path - which is
+        # exactly the "No such file or directory" the frame showed.
+        screen.type(text)
+        time.sleep(1)
         screen.key("ret")
-        time.sleep(6)
+        time.sleep(wait)
 
     send("ls /System/Library/LaunchDaemons")
     screen.grab(prefix + "-daemons")
 
-    send("echo %s | sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist" % ACCOUNT_PASS)
-    time.sleep(16)
+    send("echo %s | sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist" % ACCOUNT_PASS, wait=20)
     screen.grab(prefix + "-ssh-cmd")
     log("ssh commands issued; see the two frames")
     return True
