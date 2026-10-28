@@ -207,7 +207,7 @@ jobs:
 
           docker rm -f assetsrc || true
           docker run -d --name assetsrc \
-            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            --device=/dev/kvm \
             -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=Y \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
@@ -289,7 +289,7 @@ jobs:
             # qemu in the image, driver on this host, joined by the QMP socket that
             # the bind mount makes visible to both.
             docker run -d --name driver \
-              --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+              --device=/dev/kvm \
               --entrypoint sh \
               -v "$GITHUB_WORKSPACE/vm:/vm" \
               -v "$GITHUB_WORKSPACE/frames:/frames" \
