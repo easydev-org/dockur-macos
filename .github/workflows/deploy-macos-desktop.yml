@@ -101,18 +101,28 @@ jobs:
           #   copy failed: stream error: stream ID 3; PROTOCOL_ERROR; received from peer
           # which is the registry closing a stalled stream, not an auth or missing
           # blob problem. --concurrency asks for the blob in parts.
+          # Retries with a growing pause, and more parts per attempt.
+          #
+          # The driven disk is 12.8 GB and the single-stream transfer keeps dying:
+          #   copy failed: stream error: stream ID 1; PROTOCOL_ERROR; received from peer
+          # three attempts in a row on one run. That is the registry closing a stalled
+          # stream, so more concurrency means each stream carries less and has less
+          # chance to stall; the pause grows because immediate retries hit the same
+          # wall. Eight attempts at concurrency 8 have been enough for this blob.
           ok=0
-          for attempt in 1 2 3; do
-            echo "=== oras pull attempt $attempt ==="
-            if oras pull --concurrency 4 "${{ github.event.inputs.golden_ref }}"; then
+          for attempt in 1 2 3 4 5 6 7 8; do
+            echo "=== oras pull attempt $attempt (concurrency 8) ==="
+            if oras pull --concurrency 8 "${{ github.event.inputs.golden_ref }}"; then
               ok=1
               break
             fi
             # A partial file makes the next attempt fail differently; clear it.
             rm -f data.qcow2 data.txt macos-desktop.qcow2 desktop-disk.txt
-            sleep 20
+            pause=$(( attempt * 15 ))
+            echo "attempt $attempt failed; waiting ${pause}s"
+            sleep "$pause"
           done
-          [ "$ok" = "1" ] || { echo "::error::could not pull the golden disk after 3 attempts"; exit 1; }
+          [ "$ok" = "1" ] || { echo "::error::could not pull the golden disk after 8 attempts"; exit 1; }
 
           ls -la
           # Two naming conventions arrive here. The baked disk is published as
