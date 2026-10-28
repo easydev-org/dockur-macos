@@ -93,7 +93,7 @@ ACCOUNT_USER = os.environ.get("SETUP_USERNAME", "docker")
 ACCOUNT_PASS = os.environ.get("SETUP_PASSWORD", "admin")
 
 ACCOUNT_FIELDS = (
-    ("full name", 942, 455, ACCOUNT_USER.capitalize()),
+    ("full name", 942, 455, ACCOUNT_USER),
     ("account name", 942, 486, ACCOUNT_USER),
     ("password", 896, 528, ACCOUNT_PASS),
     ("verify", 1057, 528, ACCOUNT_PASS),
@@ -440,7 +440,6 @@ def enable_ssh_from_desktop(screen, log, prefix):
         "launchctl enable system/com.openssh.sshd; "
         "launchctl load -w /System/Library/LaunchDaemons/ssh.plist; "
         "systemsetup -setremotelogin on; "
-        "netstat -an | grep -c '.22 '; "
         "echo SSH-DONE"
     )
     line = 'echo %s | sudo -S bash -c "%s"' % (ACCOUNT_PASS, inner)
@@ -459,9 +458,35 @@ def enable_ssh_from_desktop(screen, log, prefix):
         time.sleep(0.06)
     time.sleep(1)
     screen.key("ret")
-    time.sleep(10)
+    time.sleep(15)
     screen.grab(prefix + "-ssh-cmd")
     log("ssh command issued; see the frame for its output")
+
+    # A second, tiny command whose only output is short and near the prompt, so a
+    # frame taken right after it says whether sshd is up without depending on the
+    # long line above staying on screen. The 80x24 window scrolled the previous
+    # result away - the frame showed hundreds of netstat lines instead of SSH-DONE.
+    for ch in "ls /System/Library/LaunchDaemons/ssh.plist >/dev/null 2>&1 && echo HAVE-SSHD":
+        if ch == " ":
+            screen.key("spc")
+        elif ch == ".":
+            screen.key("dot")
+        elif ch == "/":
+            screen.key("slash")
+        elif ch == ">":
+            screen.key("shift-dot")
+        elif ch == "&":
+            screen.key("shift-7")
+        elif ch == "2":
+            screen.key("2")
+        elif ch.isupper():
+            screen.key("shift-" + ch.lower())
+        else:
+            screen.key(ch)
+        time.sleep(0.08)
+    screen.key("ret")
+    time.sleep(6)
+    screen.grab(prefix + "-ssh-check")
 
 
 def main():
