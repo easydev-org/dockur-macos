@@ -718,21 +718,29 @@ def main():
                 for label, x, y, value in ACCOUNT_FIELDS:
                     log("account: %s at (%d,%d)" % (label, x, y))
                     screen.click(x, y)
-                    time.sleep(0.8)
-                    # Cmd-A is select-all on macOS. ctrl-a is "move to start of line",
-                    # which is not the same thing - and it is what produced the account
-                    # name "seruser": the field already held "ser", the cursor jumped to
-                    # the front, "user" was typed ahead of it, and nothing was replaced.
-                    qmpmod.key_combo(screen.q, "meta_l", "a")
-                    time.sleep(0.3)
-                    screen.key("backspace")
-                    time.sleep(0.3)
+                    time.sleep(1.2)
+
+                    # Only clear on a retry. Clearing unconditionally broke the last
+                    # run: Cmd-A, backspace and typing raced, the delete landed after
+                    # the first character, and a full name of "Docker" came out as
+                    # "ocker". The password and its verification then disagreed - 5
+                    # dots against 6 - which is why Continue refused the form.
+                    # A retry is any pass after the first, tracked on the function.
+                    if getattr(main, "account_passes", 0) > 0:
+                        qmpmod.key_combo(screen.q, "meta_l", "a")
+                        time.sleep(0.9)
+                        screen.key("backspace")
+                        time.sleep(0.9)
+
                     for ch in value:
                         screen.key(ch)
-                        time.sleep(0.12)
-                    time.sleep(0.5)
+                        # 0.2s per character. At 0.12 the guest dropped and reordered
+                        # keys, and the field contents are the only evidence that it did.
+                        time.sleep(0.2)
+                    time.sleep(0.8)
+                main.account_passes = getattr(main, "account_passes", 0) + 1
                 main.account_filled = True
-                log("account form filled")
+                log("account form filled (pass %d)" % main.account_passes)
                 screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
                 time.sleep(9)
                 log("step %d: after Continue -> %s"
