@@ -109,12 +109,25 @@ jobs:
               break
             fi
             # A partial file makes the next attempt fail differently; clear it.
-            rm -f data.qcow2 data.txt
+            rm -f data.qcow2 data.txt macos-desktop.qcow2 desktop-disk.txt
             sleep 20
           done
           [ "$ok" = "1" ] || { echo "::error::could not pull the golden disk after 3 attempts"; exit 1; }
 
           ls -la
+          # Two naming conventions arrive here. The baked disk is published as
+          # data.qcow2/data.txt; the driven desktop disk as
+          # macos-desktop.qcow2/desktop-disk.txt, because the publish step uploads the
+          # files by the names it has on disk. Both are normalised to data.qcow2 so
+          # everything downstream - and the artifact fallback below - sees one name.
+          #
+          # This mismatch is what failed the first verification run: oras pulled
+          # 12.8 GB correctly and then 'qemu-img info data.qcow2' said no such file,
+          # because the file on disk was called macos-desktop.qcow2.
+          if [ -s macos-desktop.qcow2 ]; then
+            mv -f macos-desktop.qcow2 data.qcow2
+            [ -s desktop-disk.txt ] && mv -f desktop-disk.txt data.txt
+          fi
           qemu-img info data.qcow2
           cat data.txt 2>/dev/null || true
 
