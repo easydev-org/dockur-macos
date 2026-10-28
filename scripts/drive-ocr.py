@@ -484,64 +484,39 @@ def enable_ssh_from_desktop(screen, log, prefix):
     log("sharing pane text: %s" % " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
                                               for w in sorted(words, key=lambda w: (w[2], w[1])))[:600])
 
-    # Find Remote Login by scrolling the Sharing pane - after focusing that pane.
+    # Find Remote Login through the Settings SEARCH FIELD, opened with Cmd-F.
     #
-    # The pane lists, in order: Content & Media (File, Media, Screen, Caching),
-    # Accessories & Internet (Bluetooth, Printer, Internet), Advanced (Remote
-    # Management). Remote Login comes after all of it.
+    # The pane itself is right - its frame lists Content & Media (File, Media, Screen,
+    # Caching), Accessories & Internet (Bluetooth, Printer, Internet) and Advanced
+    # (Remote Management) - but the list ends at the window edge. Remote Login sits
+    # just below it, and nothing moves the list: eight wheel notches at 12000 units,
+    # eight Page Downs and twelve down arrows all left the frame pixel-identical
+    # (distinct=4974 throughout), so wheel and scroll keys are both inert here.
     #
-    # Two things had to be fixed to reach it. The scroll units are thousandths of an
-    # inch, not pixels: at 120 per notch nothing moved and six attempts produced
-    # pixel-identical frames. And the click that precedes the wheel matters, because a
-    # wheel event goes to whatever is under the pointer and the window has to be the
-    # one receiving it.
+    # Searching sidesteps all of it. Cmd-F focuses the field, and results appear at the
+    # TOP of the sidebar - fully visible, no scrolling needed. Cmd-F is a chord, and
+    # chords have worked throughout (Cmd-Space opened Spotlight, Cmd-A cleared fields).
+    log("ssh: opening the settings search field with Cmd-F")
+    qmpmod.key_combo(screen.q, "meta_l", "f")
+    time.sleep(2)
+    screen.type("remote", delay=0.2)
+    time.sleep(6)
+    screen.grab(prefix + "-remote-search")
+
     def find_remote_login(tag):
         pngx = screen.grab(prefix + "-scan-" + tag)
+        hits = []
         for w in screen.text(pngx):
             head = w[0].strip(":,").lower()
             if head in ("remote", "remote login") or head.startswith("remote l"):
-                return (w[1], w[2])
-        return None
+                hits.append((w[1], w[2], w[0]))
+        # The search result sits high in the sidebar; the pane headings sit lower.
+        hits.sort(key=lambda h: h[1])
+        return (hits[0][0], hits[0][1]) if hits else None
 
-    # Put the pointer in the content area and click once, so the pane is focused.
-    content = (int(W * 0.62), int(H * 0.55))
-    screen.click(content[0], content[1])
-    time.sleep(2)
-
-    target = find_remote_login("top")
+    target = find_remote_login("search")
     if target is None:
-        # Scroll with the KEYBOARD, not the wheel.
-        #
-        # Eight wheel notches at 12000 units each left the pane pixel-identical -
-        # distinct=4970 before and after, and reading the frame showed the list still
-        # starting at Content & Media. QMP's wheel event is delivered but this guest
-        # does not act on it.
-        #
-        # Keys are the channel that has worked every time here: Spotlight, the login
-        # password and every wizard click all went through key and click events. So the
-        # content area is focused and Page Down is pressed, which scrolls whatever list
-        # holds focus.
-        for i in range(8):
-            log("ssh: scrolling the pane with Page Down (try %d)" % (i + 1))
-            screen.key("pgdn")
-            time.sleep(1.5)
-            target = find_remote_login("p%d" % (i + 1))
-            if target is not None:
-                break
-
-    if target is None:
-        # Page Down may not be bound in this pane; arrows are the fallback, and Tab
-        # walks the focusable controls in order, which also reaches rows below the fold.
-        for i in range(12):
-            log("ssh: stepping down with the arrow key (try %d)" % (i + 1))
-            screen.key("down")
-            time.sleep(0.6)
-            target = find_remote_login("d%d" % (i + 1))
-            if target is not None:
-                break
-
-    if target is None:
-        log("ssh: Remote Login was never found, even after scrolling")
+        log("ssh: no Remote Login in the search results either")
         return False
 
     log("found Remote Login at %s" % (target,))
