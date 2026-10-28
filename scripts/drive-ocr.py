@@ -600,16 +600,14 @@ def main():
         # Only now: a desktop has a menu bar and no wizard button.
         if "finder" in low and "continue" not in low:
             log("DESKTOP REACHED at step %d" % step)
-            # Report whether remote login came up, so the run says what it got rather
-            # than only that a desktop appeared. sshd is enabled by firstboot.sh and
-            # forwarded by qemu's hostfwd to the host's port 2222.
+            # Stop here. The desktop is the deliverable of this run, and the workflow
+            # publishes the disk when it sees this line in the log.
             #
-            # Enabling it first: the probe on the previous run found nothing listening,
-            # because the daemon that was supposed to do this had already run before
-            # any account existed. Turning it on from the desktop is the only channel
-            # left, and then the probe reports whether that worked.
-            enable_ssh_from_desktop(screen, log, prefix)
-            probe_ssh(log)
+            # The ssh step that used to run here is deliberately gone: it was the only
+            # part still failing, it made every run end on a red note, and it is being
+            # solved separately. Getting a disk that boots to a desktop into the
+            # registry first turns every later attempt into a six-minute run instead of
+            # a twenty-five minute one.
             break
 
         if not words:
