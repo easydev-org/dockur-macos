@@ -510,11 +510,33 @@ def enable_ssh_from_desktop(screen, log, prefix):
 
     target = find_remote_login("top")
     if target is None:
+        # Scroll with the KEYBOARD, not the wheel.
+        #
+        # Eight wheel notches at 12000 units each left the pane pixel-identical -
+        # distinct=4970 before and after, and reading the frame showed the list still
+        # starting at Content & Media. QMP's wheel event is delivered but this guest
+        # does not act on it.
+        #
+        # Keys are the channel that has worked every time here: Spotlight, the login
+        # password and every wizard click all went through key and click events. So the
+        # content area is focused and Page Down is pressed, which scrolls whatever list
+        # holds focus.
         for i in range(8):
-            log("ssh: scrolling the Sharing pane down (try %d)" % (i + 1))
-            screen.scroll(content[0], content[1], 1)
+            log("ssh: scrolling the pane with Page Down (try %d)" % (i + 1))
+            screen.key("pgdn")
             time.sleep(1.5)
-            target = find_remote_login(str(i + 1))
+            target = find_remote_login("p%d" % (i + 1))
+            if target is not None:
+                break
+
+    if target is None:
+        # Page Down may not be bound in this pane; arrows are the fallback, and Tab
+        # walks the focusable controls in order, which also reaches rows below the fold.
+        for i in range(12):
+            log("ssh: stepping down with the arrow key (try %d)" % (i + 1))
+            screen.key("down")
+            time.sleep(0.6)
+            target = find_remote_login("d%d" % (i + 1))
             if target is not None:
                 break
 
