@@ -496,109 +496,50 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # Searching sidesteps all of it. Cmd-F focuses the field, and results appear at the
     # TOP of the sidebar - fully visible, no scrolling needed. Cmd-F is a chord, and
     # chords have worked throughout (Cmd-Space opened Spotlight, Cmd-A cleared fields).
-    log("ssh: opening the settings search field with Cmd-F")
+    log("ssh: searching System Settings for remote login")
     qmpmod.key_combo(screen.q, "meta_l", "f")
     time.sleep(2)
-    screen.type("remote", delay=0.2)
-    time.sleep(6)
-    screen.grab(prefix + "-remote-search")
 
-    def find_remote_login(tag):
-        pngx = screen.grab(prefix + "-scan-" + tag)
-        hits = []
-        for w in screen.text(pngx):
-            head = w[0].strip(":,").lower()
-            if head in ("remote", "remote login") or head.startswith("remote l"):
-                hits.append((w[1], w[2], w[0]))
-        # The search result sits high in the sidebar; the pane headings sit lower.
-        hits.sort(key=lambda h: h[1])
-        return (hits[0][0], hits[0][1]) if hits else None
-
-    target = find_remote_login("search")
-    if target is None:
-        log("ssh: no Remote Login in the search results either")
-        return False
-
-    log("found Remote Login in the search results at %s" % (target,))
-
-    # Clicking the SEARCH RESULT navigates to the pane; it toggles nothing.
-    screen.click(target[0], target[1])
-    time.sleep(6)
-    png_pane = screen.grab(prefix + "-remote-pane")
-
-    # The switch column is at x~1234 and rows are ~53px apart, so a click has to land
-    # on the right ROW, not merely near it. The first attempt clicked y=288, which is
-    # the Sharing heading; that opened the Remote MANAGEMENT popover, whose Done button
-    # then had to be dismissed before anything else could be touched.
+    # KEYBOARD ONLY FROM HERE. Coordinates and OCR both proved unreliable for this
+    # pane: the switch column sits at x~1234 with rows 53px apart, and the search
+    # result list put "Remote Login" a few pixels from "Remote Management", so every
+    # click landed on the neighbour and opened the wrong popover. OCR did not help
+    # either - the word it matched at (668,373) turned out to be part of a different
+    # sidebar entry entirely.
     #
-    # Measured from the frame: Remote Management sits at y~381 and Remote login at
-    # y~434. The row is found by reading its label, and the switch is at x=1234 on that
-    # same line - not x=1300, which is past the switch and lands on the i button.
-    SWITCH_X = 1234
-
-    def find_row(tag):
-        """Locate the Remote LOGIN row, not the Remote MANAGEMENT one.
-
-        OCR breaks both labels into a bare word "Remote" followed by a second word,
-        so matching "remote" alone picks whichever comes first - Remote Management,
-        one row above. That is what opened the Remote Management popover twice:
-
-            Remote Login row at (818,288); clicking the switch at (1234,288)
-
-        and 288 is the Management row. The distinguishing word is on the SAME LINE, so
-        the pair is matched by line: a "remote" with a "login" beside it at the same
-        y. Sidebar hits are skipped by x, since the search result shows the same words
-        near x=660.
-        """
-        pngx = screen.grab(prefix + "-row-" + tag)
-        words_here = screen.text(pngx)
-        remotes = [w for w in words_here
-                   if w[0].strip(":,").lower() == "remote" and w[1] > 800]
-        logins = [w for w in words_here
-                  if w[0].strip(":,").lower().startswith("log") and w[1] > 800]
-        for r in sorted(remotes, key=lambda w: w[2]):
-            for l in logins:
-                if abs(l[2] - r[2]) <= 14:
-                    return (r[1], r[2])
-        # Fall back to the single named row, if OCR returned it unsplit.
-        for w in words_here:
-            if w[0].strip(":,").lower() == "remote login" and w[1] > 800:
-                return (w[1], w[2])
-        return None
-
-    row = find_row("after-navigate")
-    if row is None:
-        log("ssh: Remote Login row not visible after navigating from the search result")
-        return False
-
-    # If a popover is open (the wrong row was hit earlier, or the search landed on
-    # Remote Management), it covers the list. Done closes it.
-    pane_text = " ".join(w[0] for w in screen.text(screen.grab(prefix + "-pane-check")))
-    if "done" in pane_text.lower() or "access for" in pane_text.lower():
-        log("ssh: a popover is open; pressing Escape to close it")
-        screen.key("esc")
-        time.sleep(3)
-        row = find_row("after-esc") or row
-
-    log("Remote Login row at %s; clicking the switch at (%d,%d)"
-        % (row, SWITCH_X, row[1]))
-    screen.click(SWITCH_X, row[1])
+    # Keys have worked on every pane: Cmd-Space opened Spotlight first time, the login
+    # password went in, Page Down reached the list. So the whole sequence is typed:
+    # search for the two-word term so only one result matches, Return to open it, Tab
+    # to reach the switch, Space to flip it.
+    screen.type("remote login", delay=0.18)
+    time.sleep(5)
+    screen.grab(prefix + "-search-typed")
+    screen.key("ret")
     time.sleep(7)
-    screen.grab(prefix + "-ssh-toggled")
+    screen.grab(prefix + "-opened")
 
-    # Enabling remote login raises an administrator prompt: a small sheet with a name
-    # and password field and two buttons. The password field is focused, so the
-    # password is typed and Return confirms.
-    after_words = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
-    text_after = " ".join(w[0] for w in after_words).lower()
-    log("after toggle: %s" % " ".join(w[0] for w in after_words)[:220])
-    if "password" in text_after or "administrator" in text_after:
+    # Tab walks the focusable controls; the switch for remote login is among them.
+    # Space toggles whatever holds focus, so a few Tabs followed by a Space finds it.
+    for i in range(10):
+        screen.key("tab")
+        time.sleep(0.5)
+    screen.key("spc")
+    time.sleep(6)
+    screen.grab(prefix + "-toggled")
+
+    after = screen.text(screen.grab(prefix + "-after-toggle"))
+    text_after = " ".join(w[0] for w in after).lower()
+    log("after toggle: %s" % " ".join(w[0] for w in after)[:220])
+
+    # Enabling remote login prompts for an administrator password, in a sheet whose
+    # password field already has focus.
+    if "password" in text_after or "administrator" in text_after or "name" in text_after:
         log("administrator prompt; typing the password")
         screen.type(ACCOUNT_PASS, delay=0.2)
         time.sleep(1)
         screen.key("ret")
         time.sleep(8)
-        final = screen.text(screen.grab(prefix + "-ssh-final"))
+        final = screen.text(screen.grab(prefix + "-final"))
         log("after password -> %s" % " ".join(w[0] for w in final)[:200])
 
     return True
