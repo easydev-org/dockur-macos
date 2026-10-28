@@ -427,16 +427,24 @@ def enable_ssh_from_desktop(screen, log, prefix):
     time.sleep(8)
     screen.grab(prefix + "-terminal")
 
-    # A single line: sudo is not needed for launchctl on the sshd job as long as the
-    # account is an admin, but sudo is used anyway so the command does not depend on
-    # group membership. -S reads the password from stdin, fed by the echo.
-    command = (
-        "sudo -S launchctl enable system/com.openssh.sshd; "
-        "sudo -S launchctl load -w /System/Library/LaunchDaemons/ssh.plist; "
-        "sudo -S systemsetup -setremotelogin on; "
-        "netstat -an | grep -c '\\.22 '; echo SSH-DONE"
+    # ONE sudo, one password.
+    #
+    # The previous form chained three separate `sudo -S` calls after a single
+    # `echo pass |`, so only the first received the password on stdin and the others
+    # stopped at "Password:" waiting for a terminal that never answers. The frame
+    # showed exactly that: the prompt sitting there with the cursor after it.
+    #
+    # Wrapping the whole sequence in one `sudo -S bash -c` means one password unlocks
+    # all of it.
+    inner = (
+        "launchctl enable system/com.openssh.sshd; "
+        "launchctl load -w /System/Library/LaunchDaemons/ssh.plist; "
+        "systemsetup -setremotelogin on; "
+        "netstat -an | grep -c '.22 '; "
+        "echo SSH-DONE"
     )
-    for ch in "echo %s | sudo -S bash -c \"%s\"" % (ACCOUNT_PASS, command):
+    line = 'echo %s | sudo -S bash -c "%s"' % (ACCOUNT_PASS, inner)
+    for ch in line:
         if ch == " ":
             screen.key("spc")
         elif ch in "\"'":
@@ -711,9 +719,14 @@ def main():
                     log("account: %s at (%d,%d)" % (label, x, y))
                     screen.click(x, y)
                     time.sleep(0.8)
-                    # Clear whatever a previous pass may have left, then type.
-                    qmpmod.key(screen.q, "ctrl-a")
-                    time.sleep(0.2)
+                    # Cmd-A is select-all on macOS. ctrl-a is "move to start of line",
+                    # which is not the same thing - and it is what produced the account
+                    # name "seruser": the field already held "ser", the cursor jumped to
+                    # the front, "user" was typed ahead of it, and nothing was replaced.
+                    qmpmod.key_combo(screen.q, "meta_l", "a")
+                    time.sleep(0.3)
+                    screen.key("backspace")
+                    time.sleep(0.3)
                     for ch in value:
                         screen.key(ch)
                         time.sleep(0.12)
