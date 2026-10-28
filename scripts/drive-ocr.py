@@ -618,9 +618,13 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # gets an answer either way. A second password with no prompt waiting is harmless:
     # it is typed at the shell and simply errors without changing anything.
     def sudo_send(command, wait=6):
+        # sudo caches the credential for a few minutes, so after the first successful
+        # one the later commands do not prompt at all - and a password typed at the
+        # shell prompt becomes "zsh: command not found: admin". Stopping as soon as
+        # the state reads On is enough; the extra send is kept only for the first
+        # command, which is the one that lands before sudo is ready.
         send(command, wait=wait)
         send(ACCOUNT_PASS, wait=6)
-        send(ACCOUNT_PASS, wait=10)
 
     sudo_send("sudo systemsetup -getremotelogin")
     screen.grab(prefix + "-ssh-state")
@@ -635,14 +639,19 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # And prove it from inside the guest: ssh to itself and run a command. This is the
     # strongest evidence available over a channel that only carries keystrokes - a
     # successful loopback login means sshd is up, the account works, and the password
-    # is right. The host key prompt is answered with Return (accept), then the password.
+    # is right.
     #
-    # Every character is lowercase or a digit, and the line is short.
-    send("ssh localhost uname", wait=8)
+    # THE HOST KEY PROMPT WANTS "yes", NOT A NEWLINE. The previous attempt pressed
+    # Return at
+    #   Are you sure you want to continue connecting (yes/no/[fingerprint])?
+    # which ssh reads as "no", and answered "Host key verification failed" without
+    # ever asking for the password. Options are pre-seeded instead, so the prompt
+    # cannot appear at all: StrictHostKeyChecking=no adds the key silently.
+    #
+    # Every character is lowercase, a digit or a dash, and the line is short.
+    send("ssh -o stricthostkeychecking=no localhost uname", wait=10)
     screen.grab(prefix + "-ssh-loopback-prompt")
-    screen.key("ret")                     # accept the host key
-    time.sleep(3)
-    send(ACCOUNT_PASS, wait=8)
+    send(ACCOUNT_PASS, wait=10)
     screen.grab(prefix + "-ssh-loopback")
     log("ssh: systemsetup commands issued")
     return True
