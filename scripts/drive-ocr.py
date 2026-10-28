@@ -393,23 +393,26 @@ def find_wanted_country(words):
     return None, None
 
 
-def probe_ssh(log, host="127.0.0.1", port=2222, user=None):
+def probe_ssh(log, host="127.0.0.1", port=2222, user=None, attempts=8, delay=6):
     """Say whether remote login is reachable, and log the evidence either way.
 
-    QEMU forwards the guest's port 22 to 2222 on the host, and firstboot.sh enables
-    sshd inside macOS. Both halves are new, so this reports what it finds rather than
-    assuming the pair worked.
+    QEMU forwards the guest port 22 to 2222 on the host, and the driver turns remote
+    login on from Terminal. The two are measured separately because they fail
+    separately: a forward that is up with no listener answers "connection refused",
+    and that is exactly what earlier runs showed even after systemsetup reported
+    "Remote Login: On".
 
-    A TCP connect answers "is sshd listening". Waiting for the banner does too, and the
-    banner names the server. Authentication is not attempted here: this process has no
-    way to supply a password, and failing that check would say nothing about the setup.
+    Retried, because systemsetup returns as soon as it has written the setting, while
+    launchd takes a few seconds more to start sshd and bind the port. A single probe a
+    moment later reports refused and looks like a failure when the port simply was not
+    up yet.
     """
     import socket as _socket
     user = user or ACCOUNT_USER
 
     def tcp_open():
         s = _socket.socket()
-        s.settimeout(10)
+        s.settimeout(8)
         try:
             s.connect((host, port))
             try:
@@ -422,16 +425,21 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user=None):
         finally:
             s.close()
 
-    opened, detail = tcp_open()
-    log("ssh probe: tcp %s:%d open=%s detail=%r" % (host, port, opened, detail))
-    if not opened:
-        log("ssh probe: nothing on %d - sshd did not start in the guest" % port)
-        return False
-    if "ssh" in detail.lower():
-        log("ssh probe: sshd is serving on port %d (banner above)" % port)
-    else:
-        log("ssh probe: port %d is open but the banner is not an ssh one" % port)
-    return True
+    for i in range(attempts):
+        opened, detail = tcp_open()
+        log("ssh probe %d/%d: tcp %s:%d open=%s detail=%r"
+            % (i + 1, attempts, host, port, opened, detail))
+        if opened:
+            if "ssh" in detail.lower():
+                log("ssh probe: sshd is serving on %d" % port)
+            else:
+                log("ssh probe: port %d open, banner is not ssh" % port)
+            return True
+        if i + 1 < attempts:
+            time.sleep(delay)
+
+    log("ssh probe: still refused after %d attempts - sshd is not listening" % attempts)
+    return False
 
 
 def enable_ssh_from_desktop(screen, log, prefix):
@@ -548,15 +556,27 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # sudo silently getting nothing. Typing the password at the prompt avoids it.
     #
     # Every command here is lowercase and short.
-    send("sudo systemsetup -getremotelogin", wait=6)
+    # The password is answered TWICE on purpose.
+    #
+    # Every sudo here asks for it, and the first attempt at a prompt regularly misses:
+    # the frames show "Password: Sorry, try again. Password:" - the characters went out
+    # before sudo had attached to the terminal, so it discarded them, and the second
+    # prompt is the one that takes. Sending the password twice means the first prompt
+    # gets an answer either way. A second password with no prompt waiting is harmless:
+    # it is typed at the shell and simply errors without changing anything.
+    def sudo_send(command, wait=6):
+        send(command, wait=wait)
+        send(ACCOUNT_PASS, wait=6)
+        send(ACCOUNT_PASS, wait=10)
+
+    sudo_send("sudo systemsetup -getremotelogin")
     screen.grab(prefix + "-ssh-state")
 
-    send("sudo systemsetup -setremotelogin on", wait=6)
-    send(ACCOUNT_PASS, wait=10)
+    sudo_send("sudo systemsetup -setremotelogin on")
     screen.grab(prefix + "-ssh-set")
 
     # Read the state back. "Remote Login: On" is the line to look for.
-    send("sudo systemsetup -getremotelogin", wait=6)
+    sudo_send("sudo systemsetup -getremotelogin")
     screen.grab(prefix + "-ssh-check")
     log("ssh: systemsetup commands issued")
     return True
