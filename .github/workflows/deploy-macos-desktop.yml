@@ -383,7 +383,7 @@ jobs:
             echo "git_sha: ${{ github.sha }}"
             echo "driven_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "desktop_reached: yes"
-            echo "account: ${{ env.SETUP_USERNAME }}"
+            echo "account: docker (created by the driver at the account pane)"
             echo "--- qemu-img info ---"
             qemu-img info macos-desktop.qcow2
           } > desktop-disk.txt
