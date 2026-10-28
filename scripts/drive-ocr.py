@@ -543,6 +543,15 @@ def enable_ssh_from_desktop(screen, log, prefix):
             head = w[0].strip(":,").lower()
             # "Remote login" and "Remote Login" both appear depending on the pane.
             if head in ("remote", "remote login"):
+                # ONLY the content area. The sidebar shows the same words in the
+                # search results near x=660, and taking the topmost match picked that
+                # one: the log says "Remote Login row at (659,265); clicking the
+                # switch at (1234,265)" - a switch coordinate borrowed from a sidebar
+                # entry, on a line where the content area has nothing.
+                #
+                # The pane's own rows live right of the sidebar divider, so x>800.
+                if w[1] <= 800:
+                    continue
                 if best is None or w[2] < best[1]:
                     best = (w[1], w[2])
         return best
