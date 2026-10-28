@@ -496,82 +496,54 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # Searching sidesteps all of it. Cmd-F focuses the field, and results appear at the
     # TOP of the sidebar - fully visible, no scrolling needed. Cmd-F is a chord, and
     # chords have worked throughout (Cmd-Space opened Spotlight, Cmd-A cleared fields).
-    log("ssh: searching System Settings for remote login")
-    qmpmod.key_combo(screen.q, "meta_l", "f")
-    time.sleep(2)
-
-    # KEYBOARD ONLY FROM HERE. Coordinates and OCR both proved unreliable for this
-    # pane: the switch column sits at x~1234 with rows 53px apart, and the search
-    # result list put "Remote Login" a few pixels from "Remote Management", so every
-    # click landed on the neighbour and opened the wrong popover. OCR did not help
-    # either - the word it matched at (668,373) turned out to be part of a different
-    # sidebar entry entirely.
+    # TERMINAL, NOT SYSTEM SETTINGS.
     #
-    # Keys have worked on every pane: Cmd-Space opened Spotlight first time, the login
-    # password went in, Page Down reached the list. So the whole sequence is typed:
-    # search for the two-word term so only one result matches, Return to open it, Tab
-    # to reach the switch, Space to flip it.
-    screen.type("remote login", delay=0.18)
-    time.sleep(5)
-    screen.grab(prefix + "-search-typed")
-
-    # DOWN then RETURN. With one result in the list, Return alone does nothing - the
-    # frames frame-opened and frame-after-toggle were pixel-identical at distinct=4679,
-    # so the pane never changed. Down moves the selection into the result list and
-    # Return activates it.
-    screen.key("down")
-    time.sleep(1)
-    screen.key("ret")
-    time.sleep(8)
-    screen.grab(prefix + "-opened")
-
-    # Now the pane itself is showing. Its Remote login row has a switch at the right
-    # edge; the row is found by reading the screen for the label on the RIGHT half,
-    # which avoids the sidebar entry with the same words.
-    def find_row(tag):
-        words_here = screen.text(screen.grab(prefix + "-row-" + tag))
-        remotes = [w for w in words_here
-                   if w[0].strip(":,").lower() == "remote" and w[1] > 800]
-        logins = [w for w in words_here
-                  if w[0].strip(":,").lower().startswith("log") and w[1] > 800]
-        for r in sorted(remotes, key=lambda w: w[2]):
-            for l in logins:
-                if abs(l[2] - r[2]) <= 14:
-                    return (r[1], r[2])
-        for w in words_here:
-            if w[0].strip(":,").lower() == "remote login" and w[1] > 800:
-                return (w[1], w[2])
-        return None
-
-    row = find_row("pane")
-    if row is None:
-        log("ssh: Remote login row not on screen; closing any popover and retrying")
-        screen.key("esc")
-        time.sleep(2)
-        row = find_row("pane2")
-
-    if row is None:
-        log("ssh: could not locate the Remote login row")
+    # The Sharing pane does hold a Remote login switch, but it sits under Advanced and
+    # below the window edge: the pane lists File/Media/Screen/Caching, then
+    # Bluetooth/Printer/Internet, then Remote Management - and stops there. Eight wheel
+    # notches, eight Page Downs and twelve down arrows all left the frame pixel
+    # identical, and Down+Return after a settings search only cleared the search box.
+    #
+    # Terminal has no such problem, and the two things that broke it before are both
+    # fixed: capitals now go out as real shift chords (proven - ls
+    # /System/Library/LaunchDaemons listed ssh.plist), and long lines are avoided by
+    # cd-ing first. Everything below is lowercase and under 35 characters, so no shift
+    # chord and no truncation is involved.
+    log("ssh: opening Terminal")
+    opened = False
+    for attempt in (1, 2, 3):
+        qmpmod.key_combo(screen.q, "meta_l", "spc")
+        time.sleep(3)
+        if screen.text(screen.grab(prefix + "-spotlight")):
+            opened = True
+            break
+    if not opened:
+        log("ssh: Spotlight would not open; cannot reach Terminal")
         return False
 
-    log("Remote login row at %s; clicking the switch at (%d,%d)" % (row, 1234, row[1]))
-    screen.click(1234, row[1])
-    time.sleep(7)
-    screen.grab(prefix + "-toggled")
+    screen.type("terminal", delay=0.15)
+    time.sleep(2.5)
+    screen.key("ret")
+    time.sleep(10)
+    screen.grab(prefix + "-terminal")
 
-    after = screen.text(screen.grab(prefix + "-after-toggle"))
-    text_after = " ".join(w[0] for w in after).lower()
-    log("after toggle: %s" % " ".join(w[0] for w in after)[:220])
-
-    if "password" in text_after or "administrator" in text_after:
-        log("administrator prompt; typing the password")
-        screen.type(ACCOUNT_PASS, delay=0.2)
+    def send(text, wait=6):
+        screen.type(text, delay=0.15)
         time.sleep(1)
         screen.key("ret")
-        time.sleep(8)
-        final = screen.text(screen.grab(prefix + "-final"))
-        log("after password -> %s" % " ".join(w[0] for w in final)[:200])
+        time.sleep(wait)
 
+    # Short, lowercase, and split so nothing can be truncated.
+    send("cd /system/library/launchdaemons", wait=3)
+    send("sudo launchctl load -w ssh.plist", wait=5)
+    send(ACCOUNT_PASS, wait=14)          # sudo asks here; the field is focused
+    screen.grab(prefix + "-ssh-cmd")
+
+    # Read the result back in one short command, so a failure is visible rather than
+    # inferred from the probe.
+    send("sudo launchctl list ssh", wait=8)
+    screen.grab(prefix + "-ssh-check")
+    log("ssh: terminal commands issued")
     return True
 
 
