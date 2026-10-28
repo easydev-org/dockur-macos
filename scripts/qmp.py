@@ -128,6 +128,43 @@ def key_combo(q, *qcodes):
         time.sleep(0.05)
 
 
+def scroll(q, x, y, dy, dx=0):
+    """Turn the wheel at (x,y). Positive dy scrolls down.
+
+    Needed because several panes put what we want below the fold: System Settings'
+    Sharing pane lists File/Media/Screen/Caching/Bluetooth/Printer/Internet Sharing
+    and Remote Management before Remote Login appears, and without a wheel the driver
+    could only click and give up. The QMP event type is "wheel", and one notch is
+    120 units, which is what a real mouse reports.
+    """
+    move(q, x, y)
+    time.sleep(0.2)
+    step = 120
+    remaining = abs(dy)
+    sign = 1 if dy > 0 else -1
+    while remaining > 0:
+        amount = min(step, remaining)
+        q.execute("input-send-event", events=[
+            {"type": "wheel",
+             "data": {"axis": "vertical",
+                      "axis-size": "int",
+                      "units": sign * amount}}])
+        remaining -= amount
+        time.sleep(0.05)
+    if dx:
+        remaining = abs(dx)
+        sign = 1 if dx > 0 else -1
+        while remaining > 0:
+            amount = min(step, remaining)
+            q.execute("input-send-event", events=[
+                {"type": "wheel",
+                 "data": {"axis": "horizontal",
+                          "axis-size": "int",
+                          "units": sign * amount}}])
+            remaining -= amount
+            time.sleep(0.05)
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)

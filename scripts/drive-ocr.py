@@ -177,6 +177,9 @@ class Screen:
     def key(self, name):
         qmpmod.key(self.q, name)
 
+    def scroll(self, x, y, dy, dx=0):
+        qmpmod.scroll(self.q, x, y, dy, dx)
+
     # Characters that need a specific QKeyCode rather than the letter itself.
     SHIFTED = {
         "|": "backslash", "!": "1", "@": "2", "#": "3", "$": "4",
@@ -481,43 +484,41 @@ def enable_ssh_from_desktop(screen, log, prefix):
     log("sharing pane text: %s" % " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
                                               for w in sorted(words, key=lambda w: (w[2], w[1])))[:600])
 
-    # Find Remote Login by USING THE PANE'S OWN SEARCH BOX, not by scrolling.
+    # Find Remote Login by scrolling the Sharing pane.
     #
-    # The first attempt opened the Sharing pane correctly - "Sharing@933,224" was in
-    # the extracted words - but the service list under it was absent: 39 tokens, the
-    # lowest at y=688, every one of them a sidebar entry. The row existed and was
-    # simply below the fold, and this driver has no scroll wheel.
+    # The frame settles what the pane contains. Under Sharing it lists, in this order:
     #
-    # System Settings has a search field at the top of its sidebar. Typing "remote"
-    # into it puts Remote Login at the top of the results, where it can be clicked
-    # without scrolling at all. Every character is lowercase.
-
-    log("ssh: using the pane search box for Remote Login")
-    screen.click(760, 240)          # the search field, top of the sidebar
-    time.sleep(2)
-    screen.type("remote", delay=0.2)
-    time.sleep(5)
-    screen.grab(prefix + "-remote-search")
-
-    def find_remote_login():
-        pngx = screen.grab(prefix + "-remote-scan")
+    #   Content & Media      File Sharing, Media Sharing, Screen Sharing, Content Caching
+    #   Accessories & Net    Bluetooth Sharing, Printer Sharing, Internet Sharing
+    #   Advanced             Remote Management
+    #
+    # Remote Login comes after all of that, below the fold, which is why the 39 words
+    # extracted from the first attempt were all sidebar entries and why a search-box
+    # click at (760,240) did nothing - the field is higher up than that and never took
+    # focus.
+    #
+    # So: scroll the content area and re-read. qmp gains a wheel event for this, since
+    # a driver that can only click cannot reach a list that continues below the window.
+    def find_remote_login(tag):
+        pngx = screen.grab(prefix + "-scan-" + tag)
         for w in screen.text(pngx):
-            if w[0].strip(":,").lower().startswith("remote"):
+            head = w[0].strip(":,").lower()
+            if head in ("remote", "remote login") or head.startswith("remote l"):
                 return (w[1], w[2])
         return None
 
-    target = find_remote_login()
+    target = find_remote_login("top")
     if target is None:
-        # The search may need a moment, or the field may not have taken focus.
-        for i in range(3):
-            log("ssh: Remote Login not visible after search (try %d)" % (i + 1))
-            time.sleep(3)
-            target = find_remote_login()
+        for i in range(6):
+            log("ssh: scrolling the Sharing pane (try %d)" % (i + 1))
+            screen.scroll(int(W * 0.62), int(H * 0.55), 240)
+            time.sleep(1.5)
+            target = find_remote_login(str(i + 1))
             if target is not None:
                 break
 
     if target is None:
-        log("ssh: Remote Login was never found in the Sharing pane")
+        log("ssh: Remote Login was never found, even after scrolling")
         return False
 
     log("found Remote Login at %s" % (target,))
