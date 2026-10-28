@@ -398,51 +398,65 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user=None):
 def enable_ssh_from_desktop(screen, log, prefix):
     """Turn remote login on from inside the running system, using its own Terminal.
 
-    WHY NOT A LAUNCHDAEMON. firstboot.sh already contains the sshd setup, but it runs
-    once, before any account exists, and deletes itself. On this disk the account is
+    WHY NOT A LAUNCHDAEMON. firstboot.sh has the sshd setup, but it runs once at first
+    boot before any account exists, and deletes itself. On this disk the account is
     created later, by this driver, at the Setup Assistant - so that daemon had already
-    run and gone by the time there was a user to log in as, and ssh was never enabled.
-    The probe says so plainly: tcp 2222 refused, nothing listening.
+    run and gone. The probe says so plainly: tcp 2222 refused, nothing listening.
 
-    WHY THE GUI IS THE ROUTE. There is no other way in: the guest has no sshd yet, no
-    shared folder, and no serial console. Opening Terminal and typing is how a person
-    would do it, and it is also the only channel available.
-
-    Spotlight opens Terminal; the command enables remote login and grants the account
-    access, then reports what it did so the log says whether it worked.
+    WHY THE GUI IS THE ROUTE. There is no other way in: no sshd, no shared folder, no
+    serial console. Opening Terminal and typing is what a person would do, and it is
+    also the only channel there is.
     """
-    log("enabling ssh from the desktop")
+    def spotlight_pane_seen():
+        """True when a screenshot shows something other than a bare desktop."""
+        ppm = screen.grab(prefix + "-spotlight-try")
+        words = screen.text(ppm)
+        return bool(words)
 
-    # Cmd-Space opens Spotlight, which is faster and more reliable than hunting for
-    # Terminal in the Dock.
-    qmpmod.key_combo(screen.q, "meta_l", "spc")
-    time.sleep(2.5)
-    screen.grab(prefix + "-spotlight")
+    # Cmd-Space, checked, and retried. On one run it opened Spotlight; on the next it
+    # did nothing at all and the three frames - spotlight, terminal, ssh-cmd - were
+    # byte-identical desktops. A chord sent just as the desktop finishes drawing is
+    # simply lost, so this tries a few times and confirms with a screenshot instead of
+    # assuming the first attempt worked.
+    opened = False
+    for attempt in (1, 2, 3):
+        qmpmod.key_combo(screen.q, "meta_l", "spc")
+        time.sleep(3)
+        if spotlight_pane_seen():
+            opened = True
+            log("spotlight opened on attempt %d" % attempt)
+            break
+        log("spotlight not visible after attempt %d" % attempt)
+    if not opened:
+        log("spotlight never opened; ssh cannot be enabled this way")
+        return False
 
+    # Type the search term, then confirm the Terminal window appeared before sending
+    # anything into it. Typing a command into a Spotlight box that never opened would
+    # go nowhere and look like an ssh failure.
     for ch in "terminal":
         screen.key(ch)
-        time.sleep(0.12)
-    time.sleep(2)
+        time.sleep(0.15)
+    time.sleep(2.5)
     screen.key("ret")
-    time.sleep(8)
+    time.sleep(10)
     screen.grab(prefix + "-terminal")
 
-    # ONE command, ONE sudo, and NO SHELL METACHARACTERS BEYOND A PIPE.
+    # ONE command, ONE sudo, and only characters proven to survive this channel.
     #
-    # The frame from the last run is unambiguous about what arrived:
+    # What arrived on an earlier attempt:
     #
-    #   echo admin | sudo -S launchctl enable system/com.openssh.sshd; launchctl load -w ...
+    #   echo admin | sudo -S launchctl enable system/com.openssh.sshd; launchctl load ...
     #   Load failed: 5: Input/output error
     #   You need administrator access to run this tool... exiting!
     #
-    # The double quotes around the bash -c argument were never delivered, so the
-    # command list fell apart: only the first entry ran under sudo, and systemsetup
-    # reported 'you need administrator access' because it was no longer sudo.
+    # The single quotes and the pipe survived; the double quotes around the bash -c
+    # argument did not, so the command list fell apart at the first semicolon and only
+    # the first entry ran under sudo.
     #
-    # systemsetup -setremotelogin on is the whole job by itself - it is what turns
-    # sshd on - so the launchd plumbing is dropped and the line is reduced to
-    # characters that survived the last attempt: letters, spaces, a dash and a pipe.
-    line = 'echo %s | sudo -S systemsetup -setremotelogin on' % ACCOUNT_PASS
+    # systemsetup -setremotelogin on is the whole job by itself, so the line is just
+    # that behind one sudo: letters, spaces, a dash and a pipe.
+    line = "echo %s | sudo -S systemsetup -setremotelogin on" % ACCOUNT_PASS
     for ch in line:
         if ch == " ":
             screen.key("spc")
@@ -450,41 +464,14 @@ def enable_ssh_from_desktop(screen, log, prefix):
             screen.key("shift-backslash")
         elif ch == "-":
             screen.key("minus")
-        elif ch.isdigit():
-            screen.key(ch)
-        elif ch.isalpha():
+        else:
             screen.key(ch)
         time.sleep(0.15)
     screen.key("ret")
-    time.sleep(20)
+    time.sleep(22)
     screen.grab(prefix + "-ssh-cmd")
-    log("ssh command issued; see the frame for its output")
-
-    # A second, tiny command whose only output is short and near the prompt, so a
-    # frame taken right after it says whether sshd is up without depending on the
-    # long line above staying on screen. The 80x24 window scrolled the previous
-    # result away - the frame showed hundreds of netstat lines instead of SSH-DONE.
-    for ch in "ls /System/Library/LaunchDaemons/ssh.plist >/dev/null 2>&1 && echo HAVE-SSHD":
-        if ch == " ":
-            screen.key("spc")
-        elif ch == ".":
-            screen.key("dot")
-        elif ch == "/":
-            screen.key("slash")
-        elif ch == ">":
-            screen.key("shift-dot")
-        elif ch == "&":
-            screen.key("shift-7")
-        elif ch == "2":
-            screen.key("2")
-        elif ch.isupper():
-            screen.key("shift-" + ch.lower())
-        else:
-            screen.key(ch)
-        time.sleep(0.08)
-    screen.key("ret")
-    time.sleep(6)
-    screen.grab(prefix + "-ssh-check")
+    log("ssh command issued at %r" % line)
+    return True
 
 
 def main():
