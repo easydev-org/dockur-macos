@@ -484,21 +484,17 @@ def enable_ssh_from_desktop(screen, log, prefix):
     log("sharing pane text: %s" % " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
                                               for w in sorted(words, key=lambda w: (w[2], w[1])))[:600])
 
-    # Find Remote Login by scrolling the Sharing pane.
+    # Find Remote Login by scrolling the Sharing pane - after focusing that pane.
     #
-    # The frame settles what the pane contains. Under Sharing it lists, in this order:
+    # The pane lists, in order: Content & Media (File, Media, Screen, Caching),
+    # Accessories & Internet (Bluetooth, Printer, Internet), Advanced (Remote
+    # Management). Remote Login comes after all of it.
     #
-    #   Content & Media      File Sharing, Media Sharing, Screen Sharing, Content Caching
-    #   Accessories & Net    Bluetooth Sharing, Printer Sharing, Internet Sharing
-    #   Advanced             Remote Management
-    #
-    # Remote Login comes after all of that, below the fold, which is why the 39 words
-    # extracted from the first attempt were all sidebar entries and why a search-box
-    # click at (760,240) did nothing - the field is higher up than that and never took
-    # focus.
-    #
-    # So: scroll the content area and re-read. qmp gains a wheel event for this, since
-    # a driver that can only click cannot reach a list that continues below the window.
+    # Two things had to be fixed to reach it. The scroll units are thousandths of an
+    # inch, not pixels: at 120 per notch nothing moved and six attempts produced
+    # pixel-identical frames. And the click that precedes the wheel matters, because a
+    # wheel event goes to whatever is under the pointer and the window has to be the
+    # one receiving it.
     def find_remote_login(tag):
         pngx = screen.grab(prefix + "-scan-" + tag)
         for w in screen.text(pngx):
@@ -507,11 +503,16 @@ def enable_ssh_from_desktop(screen, log, prefix):
                 return (w[1], w[2])
         return None
 
+    # Put the pointer in the content area and click once, so the pane is focused.
+    content = (int(W * 0.62), int(H * 0.55))
+    screen.click(content[0], content[1])
+    time.sleep(2)
+
     target = find_remote_login("top")
     if target is None:
-        for i in range(6):
-            log("ssh: scrolling the Sharing pane (try %d)" % (i + 1))
-            screen.scroll(int(W * 0.62), int(H * 0.55), 240)
+        for i in range(8):
+            log("ssh: scrolling the Sharing pane down (try %d)" % (i + 1))
+            screen.scroll(content[0], content[1], 1)
             time.sleep(1.5)
             target = find_remote_login(str(i + 1))
             if target is not None:
@@ -520,6 +521,8 @@ def enable_ssh_from_desktop(screen, log, prefix):
     if target is None:
         log("ssh: Remote Login was never found, even after scrolling")
         return False
+
+    log("found Remote Login at %s" % (target,))
 
     log("found Remote Login at %s" % (target,))
 

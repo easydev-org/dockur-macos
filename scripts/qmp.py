@@ -128,41 +128,33 @@ def key_combo(q, *qcodes):
         time.sleep(0.05)
 
 
-def scroll(q, x, y, dy, dx=0):
-    """Turn the wheel at (x,y). Positive dy scrolls down.
+def scroll(q, x, y, notches, dx_notches=0):
+    """Turn the wheel at (x,y). Positive notches scroll down.
 
-    Needed because several panes put what we want below the fold: System Settings'
-    Sharing pane lists File/Media/Screen/Caching/Bluetooth/Printer/Internet Sharing
-    and Remote Management before Remote Login appears, and without a wheel the driver
-    could only click and give up. The QMP event type is "wheel", and one notch is
-    120 units, which is what a real mouse reports.
+    UNITS MATTER AND ARE NOT PIXELS. With axis-size "int", QEMU reads units as
+    thousandths of an inch - so the 120 that a real mouse reports per notch is 0.12
+    inch here, far below the threshold at which macOS scrolls at all. Which is exactly
+    what happened: six "scrolls" left the Sharing pane pixel-identical, scan-top and
+    scan-6 matching byte for byte.
+
+    One notch is therefore 12000 units here (12 inches), and one call = one notch.
     """
     move(q, x, y)
-    time.sleep(0.2)
-    step = 120
-    remaining = abs(dy)
-    sign = 1 if dy > 0 else -1
-    while remaining > 0:
-        amount = min(step, remaining)
-        q.execute("input-send-event", events=[
-            {"type": "wheel",
-             "data": {"axis": "vertical",
-                      "axis-size": "int",
-                      "units": sign * amount}}])
-        remaining -= amount
-        time.sleep(0.05)
-    if dx:
-        remaining = abs(dx)
-        sign = 1 if dx > 0 else -1
-        while remaining > 0:
-            amount = min(step, remaining)
+    time.sleep(0.3)
+
+    def turn(axis, count):
+        sign = 1 if count > 0 else -1
+        for _ in range(abs(int(count))):
             q.execute("input-send-event", events=[
                 {"type": "wheel",
-                 "data": {"axis": "horizontal",
+                 "data": {"axis": axis,
                           "axis-size": "int",
-                          "units": sign * amount}}])
-            remaining -= amount
-            time.sleep(0.05)
+                          "units": sign * 12000}}])
+            time.sleep(0.15)
+
+    turn("vertical", notches)
+    if dx_notches:
+        turn("horizontal", dx_notches)
 
 
 def main():
