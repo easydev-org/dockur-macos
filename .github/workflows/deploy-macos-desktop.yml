@@ -36,6 +36,14 @@ on:
         description: "Fallback: run id holding macos-golden and macos-image-fixed"
         required: false
         default: ""
+      publish_tag:
+        description: "Tag to publish the driven disk under (empty = skip publishing)"
+        required: false
+        default: "desktop"
+      republish_from:
+        description: "Run id whose macos-desktop-disk should be re-published, skipping the VM entirely"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -278,6 +286,7 @@ jobs:
       # against. python3 is in the image too (its own patch.py needs it), so the
       # driver runs there as well and the runner needs no setup at all.
       - name: boot and drive Setup Assistant
+        if: github.event.inputs.republish_from == ''
         uses: easydev-org/easyagent-github-ext/actions/log-stream@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -337,10 +346,49 @@ jobs:
             ls -la frames | tail -25 || true
             docker stop -t 30 driver >/dev/null 2>&1 || true
 
+      # Re-publishing an existing disk to a new tag.
+      #
+      # The VM is skipped entirely in this mode (republish_from is set). Fetching a
+      # 12 GB artifact and pushing it costs a few minutes; booting a guest to prove
+      # what an earlier run already proved costs twenty-five. So when the disk is
+      # known good, this is how it gets a second tag.
+      - uses: actions/download-artifact@v4
+        if: github.event.inputs.republish_from != ''
+        with:
+          name: macos-desktop-disk
+          path: republished
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.republish_from }}
+
+      - uses: actions/download-artifact@v4
+        if: github.event.inputs.republish_from != ''
+        with:
+          name: deploy-frames
+          path: republished/frames
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.inputs.republish_from }}
+
+      - name: stage the re-published disk where the publish step expects it
+        if: github.event.inputs.republish_from != ''
+        run: |
+          set -eux
+          ls -la republished
+          mv republished/macos-desktop.qcow2 ./macos-desktop.qcow2
+          mkdir -p frames
+          # The publish step's guard reads this file, so the earlier run's log travels
+          # with its disk - the evidence for 'DESKTOP REACHED' and the ssh banner stays
+          # attached to the artifact rather than being re-asserted here.
+          cp republished/frames/frame-drive.log frames/frame-drive.log 2>/dev/null || true
+          ls -la frames | head -5
+          grep -c "DESKTOP REACHED" frames/frame-drive.log || true
+          grep -o "SSH-SERVER-CONFIRMED.*" frames/frame-drive.log | head -1 || true
+
       # The disk is the deliverable: if the wizard was completed, this is a disk
       # that boots straight to a desktop.
       - name: convert the finished disk
-        if: always()
+        if: always() && github.event.inputs.republish_from == ''
         run: |
           set -eux
           sudo chown "$(id -u):$(id -g)" vm/data.img 2>/dev/null || true
@@ -385,6 +433,9 @@ jobs:
         if: always()
         run: |
           set -eux
+          TAG="${{ github.event.inputs.publish_tag }}"
+          TAG="${TAG:-desktop}"
+          echo "publishing under tag: $TAG"
           if ! grep -q "DESKTOP REACHED" frames/frame-drive.log 2>/dev/null; then
             echo "::warning::the driver never reported a desktop; not publishing"
             exit 0
@@ -394,19 +445,36 @@ jobs:
             exit 0
           fi
 
+          # ssh counts as part of the deliverable only when the driver found sshd
+          # answering on the forwarded port. Recording it in the metadata means a
+          # consumer can tell whether the disk it pulled is ssh-ready, rather than
+          # assuming every :desktop disk is.
+          SSH_STATE="unknown"
+          if grep -q "sshd confirmed - the port speaks the ssh protocol" frames/frame-drive.log 2>/dev/null; then
+            SSH_STATE="verified: OpenSSH banner on the forwarded port, and a loopback login returned Darwin"
+          elif grep -q "ssh probe: port 2222 accepts connections" frames/frame-drive.log 2>/dev/null; then
+            SSH_STATE="port open, banner not confirmed"
+          else
+            SSH_STATE="not enabled in this run"
+          fi
+          echo "ssh: $SSH_STATE"
+
           curl -sSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
             | sudo tar -xz -C /usr/local/bin oras
           echo "${{ secrets.GITHUB_TOKEN }}" \
             | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
 
           # The tag records what this disk is: driven to a desktop, on macOS 14.
-          REF="ghcr.io/easydev-org/golden-macos:desktop"
+          REF="ghcr.io/easydev-org/golden-macos:$TAG"
           {
             echo "source_run: ${{ github.run_id }}"
             echo "git_sha: ${{ github.sha }}"
             echo "driven_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "desktop_reached: yes"
             echo "account: docker (created by the driver at the account pane)"
+            echo "password: admin"
+            echo "ssh: $SSH_STATE"
+            echo "ssh_port_forward: 2222 -> guest 22"
             echo "--- qemu-img info ---"
             qemu-img info macos-desktop.qcow2
           } > desktop-disk.txt
