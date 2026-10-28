@@ -521,53 +521,66 @@ def enable_ssh_from_desktop(screen, log, prefix):
 
     log("found Remote Login in the search results at %s" % (target,))
 
-    # Clicking the SEARCH RESULT navigates to the pane; it does not toggle anything.
-    # The switch lives in the content area on the right, next to the "Remote Login"
-    # row there. So: click the result, wait for the pane, then find the row again and
-    # click the switch beside it.
+    # Clicking the SEARCH RESULT navigates to the pane; it toggles nothing.
     screen.click(target[0], target[1])
     time.sleep(6)
-    screen.grab(prefix + "-remote-pane")
+    png_pane = screen.grab(prefix + "-remote-pane")
 
-    # On the pane the row reads "Remote Login" with its switch at the right edge of
-    # the content area. The switch is far to the right of the label, near x=1300.
-    def find_row():
-        pngx = screen.grab(prefix + "-remote-row")
-        cands = []
+    # The switch column is at x~1234 and rows are ~53px apart, so a click has to land
+    # on the right ROW, not merely near it. The first attempt clicked y=288, which is
+    # the Sharing heading; that opened the Remote MANAGEMENT popover, whose Done button
+    # then had to be dismissed before anything else could be touched.
+    #
+    # Measured from the frame: Remote Management sits at y~381 and Remote login at
+    # y~434. The row is found by reading its label, and the switch is at x=1234 on that
+    # same line - not x=1300, which is past the switch and lands on the i button.
+    SWITCH_X = 1234
+
+    def find_row(tag):
+        pngx = screen.grab(prefix + "-row-" + tag)
+        best = None
         for w in screen.text(pngx):
             head = w[0].strip(":,").lower()
-            if head in ("remote", "remote login") or head.startswith("remote l"):
-                cands.append((w[1], w[2]))
-        # The pane row is on the right half; the sidebar entry is on the left.
-        cands = [c for c in cands if c[0] > 800]
-        cands.sort(key=lambda c: c[1])
-        return cands[0] if cands else None
+            # "Remote login" and "Remote Login" both appear depending on the pane.
+            if head in ("remote", "remote login"):
+                if best is None or w[2] < best[1]:
+                    best = (w[1], w[2])
+        return best
 
-    row = find_row()
+    row = find_row("after-navigate")
     if row is None:
-        log("ssh: Remote Login row not found in the pane after searching")
+        log("ssh: Remote Login row not visible after navigating from the search result")
         return False
 
-    log("Remote Login row at %s; clicking its switch" % (row,))
-    # The switch sits at the right edge of the content area, on the same line.
-    screen.click(1300, row[1])
-    time.sleep(6)
-    png_toggled = screen.grab(prefix + "-ssh-toggled")
+    # If a popover is open (the wrong row was hit earlier, or the search landed on
+    # Remote Management), it covers the list. Done closes it.
+    pane_text = " ".join(w[0] for w in screen.text(screen.grab(prefix + "-pane-check")))
+    if "done" in pane_text.lower() or "access for" in pane_text.lower():
+        log("ssh: a popover is open; pressing Escape to close it")
+        screen.key("esc")
+        time.sleep(3)
+        row = find_row("after-esc") or row
 
-    # Enabling remote login raises an administrator prompt. Type the password and
-    # confirm; the field is already focused when the sheet appears.
-    words_after = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
-    text_after = " ".join(w[0] for w in words_after).lower()
-    log("after toggle: %s" % " ".join(w[0] for w in words_after)[:220])
-    if "password" in text_after or "administrator" in text_after or "name" in text_after:
+    log("Remote Login row at %s; clicking the switch at (%d,%d)"
+        % (row, SWITCH_X, row[1]))
+    screen.click(SWITCH_X, row[1])
+    time.sleep(7)
+    screen.grab(prefix + "-ssh-toggled")
+
+    # Enabling remote login raises an administrator prompt: a small sheet with a name
+    # and password field and two buttons. The password field is focused, so the
+    # password is typed and Return confirms.
+    after_words = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
+    text_after = " ".join(w[0] for w in after_words).lower()
+    log("after toggle: %s" % " ".join(w[0] for w in after_words)[:220])
+    if "password" in text_after or "administrator" in text_after:
         log("administrator prompt; typing the password")
         screen.type(ACCOUNT_PASS, delay=0.2)
         time.sleep(1)
         screen.key("ret")
         time.sleep(8)
-        screen.grab(prefix + "-ssh-confirmed")
-        log("after password -> %s" % " ".join(
-            w[0] for w in screen.text(screen.grab(prefix + "-ssh-final")))[:200])
+        final = screen.text(screen.grab(prefix + "-ssh-final"))
+        log("after password -> %s" % " ".join(w[0] for w in final)[:200])
 
     return True
 
