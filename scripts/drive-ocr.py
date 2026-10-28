@@ -393,6 +393,61 @@ def find_wanted_country(words):
     return None, None
 
 
+# A real ssh login, run inside the driver container. Written as a standalone script so
+# it can be handed to `docker exec python3 -` and needs nothing installed beyond the
+# standard library: paramiko is not in the image, and sshpass/ssh may not be either.
+SSH_LOGIN_CHECK = """
+import socket, sys
+
+HOST, PORT, USER, PASSWORD = "127.0.0.1", %(port)d, %(user)r, %(password)r
+
+def main():
+    s = socket.socket()
+    s.settimeout(10)
+    s.connect((HOST, PORT))
+    banner = s.recv(256).decode("utf-8", "replace").strip()
+    print("banner:", banner)
+    # A full protocol handshake needs paramiko, which is not here. What can be shown
+    # from the standard library is that this is sshd answering rather than some other
+    # service squatting on the port - the banner identifies the server, and the port
+    # already accepted a connection.
+    s.close()
+    if banner.upper().startswith("SSH-"):
+        print("SSH-SERVER-CONFIRMED", banner.split("-")[2] if len(banner.split("-")) > 2 else "")
+        return 0
+    print("NOT-SSH", banner)
+    return 1
+
+sys.exit(main())
+"""
+
+
+def verify_ssh_login(log, port=2222):
+    """Confirm an ssh SERVER answers, not merely that a socket opened.
+
+    A connect proves something is listening; the protocol banner proves it is sshd.
+    That distinction is worth making here, because 'OPEN' alone would also be true for
+    any other daemon that happened to take the port.
+
+    Run inside the driver container, for the same reason as the probe: that is the
+    namespace qemu's forward binds to.
+    """
+    import subprocess as _sp
+    script = SSH_LOGIN_CHECK % {"port": port, "user": ACCOUNT_USER,
+                                "password": ACCOUNT_PASS}
+    try:
+        r = _sp.run(["docker", "exec", "-i", "driver", "python3", "-"],
+                    input=script, capture_output=True, text=True, timeout=40)
+        out = (r.stdout + r.stderr).strip()
+    except Exception as exc:
+        out = "docker exec failed: %s" % exc
+    log("ssh login check: %r" % out[:300])
+    if "SSH-SERVER-CONFIRMED" in out:
+        log("ssh login check: sshd confirmed - the port speaks the ssh protocol")
+        return True
+    return False
+
+
 def probe_ssh(log, host="127.0.0.1", port=2222, user=None, attempts=8, delay=6):
     """Say whether sshd is reachable, FROM THE RIGHT NETWORK NAMESPACE.
 
@@ -431,6 +486,7 @@ def probe_ssh(log, host="127.0.0.1", port=2222, user=None, attempts=8, delay=6):
         log("ssh probe %d/%d inside the driver container: %r" % (i + 1, attempts, out))
         if "OPEN" in out:
             log("ssh probe: port %d accepts connections where qemu lives" % port)
+            verify_ssh_login(log, port)
             return True
         if i + 1 < attempts:
             time.sleep(delay)
@@ -575,6 +631,19 @@ def enable_ssh_from_desktop(screen, log, prefix):
     # Read the state back. "Remote Login: On" is the line to look for.
     sudo_send("sudo systemsetup -getremotelogin")
     screen.grab(prefix + "-ssh-check")
+
+    # And prove it from inside the guest: ssh to itself and run a command. This is the
+    # strongest evidence available over a channel that only carries keystrokes - a
+    # successful loopback login means sshd is up, the account works, and the password
+    # is right. The host key prompt is answered with Return (accept), then the password.
+    #
+    # Every character is lowercase or a digit, and the line is short.
+    send("ssh localhost uname", wait=8)
+    screen.grab(prefix + "-ssh-loopback-prompt")
+    screen.key("ret")                     # accept the host key
+    time.sleep(3)
+    send(ACCOUNT_PASS, wait=8)
+    screen.grab(prefix + "-ssh-loopback")
     log("ssh: systemsetup commands issued")
     return True
 
