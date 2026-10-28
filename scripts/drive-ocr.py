@@ -345,6 +345,46 @@ def find_wanted_country(words):
     return None, None
 
 
+def probe_ssh(log, host="127.0.0.1", port=2222, user="sandbox"):
+    """Say whether remote login is reachable, and log the evidence either way.
+
+    QEMU forwards the guest's port 22 to 2222 on the host, and firstboot.sh enables
+    sshd inside macOS. Both halves are new, so this reports what it finds rather than
+    assuming the pair worked.
+
+    A TCP connect answers "is sshd listening". Waiting for the banner does too, and the
+    banner names the server. Authentication is not attempted here: this process has no
+    way to supply a password, and failing that check would say nothing about the setup.
+    """
+    import socket as _socket
+
+    def tcp_open():
+        s = _socket.socket()
+        s.settimeout(10)
+        try:
+            s.connect((host, port))
+            try:
+                banner = s.recv(128).decode("utf-8", "replace").strip()
+            except Exception:
+                banner = ""
+            return True, banner
+        except Exception as exc:
+            return False, str(exc)
+        finally:
+            s.close()
+
+    opened, detail = tcp_open()
+    log("ssh probe: tcp %s:%d open=%s detail=%r" % (host, port, opened, detail))
+    if not opened:
+        log("ssh probe: nothing on %d - sshd did not start in the guest" % port)
+        return False
+    if "ssh" in detail.lower():
+        log("ssh probe: sshd is serving on port %d (banner above)" % port)
+    else:
+        log("ssh probe: port %d is open but the banner is not an ssh one" % port)
+    return True
+
+
 def main():
     if len(sys.argv) < 3:
         sys.exit(__doc__)
@@ -428,6 +468,10 @@ def main():
         # Only now: a desktop has a menu bar and no wizard button.
         if "finder" in low and "continue" not in low:
             log("DESKTOP REACHED at step %d" % step)
+            # Report whether remote login came up, so the run says what it got rather
+            # than only that a desktop appeared. sshd is enabled by firstboot.sh and
+            # forwarded by qemu's hostfwd to the host's port 2222.
+            probe_ssh(log)
             break
 
         if not words:

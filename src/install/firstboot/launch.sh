@@ -128,6 +128,71 @@ apply_suppression_to_account() {
 
 apply_suppression_to_account
 
+# Enable remote login, so the machine can be scripted from outside instead of only
+# through the console.
+#
+# WHY HERE. This runs as a root LaunchDaemon at first boot, which is the only place
+# that both exists before anybody logs in and has the privileges to turn sshd on. Doing
+# it from the GUI would mean driving System Settings, and doing it from the installer
+# would be discarded the way the Setup Assistant marker was.
+#
+# The grant is deliberately broad - every user may log in - because this is a build
+# appliance whose console is already reachable over the same QEMU user network. The
+# account created on the same boot has a password; sshd is what makes it usable.
+enable_remote_login() {
+  local sshlog="/var/log/macos-unattended-ssh.log"
+
+  # Provisioning a system by hand means scripting it, and scripting means ssh.
+  {
+    echo "[ssh] enabling remote login"
+
+    # launchd owns sshd; enabling the job is what /usr/sbin/systemsetup does, minus
+    # the parts of that tool which want to talk to a logged-in session.
+    /bin/launchctl enable system/com.openssh.sshd 2>/dev/null || :
+    /bin/launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || \
+      /bin/launchctl bootstrap system /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || :
+
+    # Allow password authentication for every account, which is what makes the
+    # account created on this boot usable without pre-shared keys.
+    local sshd_config="/etc/ssh/sshd_config"
+    if [ -f "$sshd_config" ]; then
+      for setting in "PasswordAuthentication yes" "PermitRootLogin no" "UsePAM yes"; do
+        local key="${setting%% *}"
+        if /usr/bin/grep -qiE "^[[:space:]]*#?[[:space:]]*$key[[:space:]]" "$sshd_config"; then
+          /usr/bin/sed -i '' -E "s|^[[:space:]]*#?[[:space:]]*$key[[:space:]].*|$setting|" "$sshd_config"
+        else
+          printf '%s\n' "$setting" >> "$sshd_config"
+        fi
+      done
+      echo "[ssh] sshd_config updated"
+    else
+      echo "[ssh] WARNING: $sshd_config is missing"
+    fi
+
+    # The access table, which macOS consults separately from sshd_config.
+    /usr/bin/dscl . -create /Groups/com.apple.access_ssh 2>/dev/null || :
+    /usr/bin/dscl . -create /Groups/com.apple.access_ssh PrimaryGroupID 399 2>/dev/null || :
+    /usr/bin/dscl . -create /Groups/com.apple.access_ssh GroupMembership 2>/dev/null || :
+    /usr/bin/dscl . -create /Groups/com.apple.access_ssh GroupMembers "0" 2>/dev/null || :
+    /usr/bin/dscl . -append /Groups/com.apple.access_ssh GroupMembers 501 2>/dev/null || :
+    /usr/bin/dscl . -create /Groups/com.apple.access_ssh NestedGroups 2>/dev/null || :
+    /usr/bin/dscl . -append /Groups/com.apple.access_ssh NestedGroups 80 2>/dev/null || :
+    /usr/bin/dscl . -append /Groups/com.apple.access_ssh NestedGroups 20 2>/dev/null || :
+    /usr/bin/dscl . -append /Groups/com.apple.access_ssh NestedGroups 401 2>/dev/null || :
+
+    # Restart sshd so the new settings take effect rather than waiting for a reboot.
+    /bin/launchctl kickstart -k system/com.openssh.sshd 2>/dev/null || :
+
+    if /usr/sbin/netstat -an 2>/dev/null | /usr/bin/grep -q '\*.22 '; then
+      echo "[ssh] sshd is listening on port 22"
+    else
+      echo "[ssh] WARNING: nothing is listening on port 22 yet"
+    fi
+  } >> "$sshlog" 2>&1
+}
+
+enable_remote_login
+
 if ! /bin/rm -f "$DAEMON"; then
   fail "failed to remove first-boot LaunchDaemon"
 fi

@@ -56,7 +56,7 @@ qemu-system-x86_64 \
   -device usb-kbd,bus=xhci.0 \
   -global nec-usb-xhci.msi=off \
   -device usb-tablet \
-  -netdev user,id=hostnet0 \
+  -netdev user,id=hostnet0,hostfwd=tcp::2222-:22 \
   -device virtio-net-pci,id=net0,netdev=hostnet0,romfile=,mac=00:16:CB:53:E9:8C \
   -drive file="$VMDIR/data.img",id=data3,format=raw,cache=none,aio=native,discard=unmap,detect-zeroes=on,if=none \
   -device virtio-blk-pci,drive=data3,bus=pcie.0,addr=0xa,iothread=io2,bootindex=3 \
