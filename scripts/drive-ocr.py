@@ -89,7 +89,7 @@ SHEET_SKIP = (1026, 634)
 # framework said admin/admin while the form said sandbox/sandbox.
 #
 # Read from the environment so the workflow sets it in one place.
-ACCOUNT_USER = os.environ.get("SETUP_USERNAME", "user")
+ACCOUNT_USER = os.environ.get("SETUP_USERNAME", "docker")
 ACCOUNT_PASS = os.environ.get("SETUP_PASSWORD", "admin")
 
 ACCOUNT_FIELDS = (
