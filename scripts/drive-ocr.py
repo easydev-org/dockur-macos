@@ -427,38 +427,36 @@ def enable_ssh_from_desktop(screen, log, prefix):
     time.sleep(8)
     screen.grab(prefix + "-terminal")
 
-    # ONE sudo, one password.
+    # ONE command, ONE sudo, and NO SHELL METACHARACTERS BEYOND A PIPE.
     #
-    # The previous form chained three separate `sudo -S` calls after a single
-    # `echo pass |`, so only the first received the password on stdin and the others
-    # stopped at "Password:" waiting for a terminal that never answers. The frame
-    # showed exactly that: the prompt sitting there with the cursor after it.
+    # The frame from the last run is unambiguous about what arrived:
     #
-    # Wrapping the whole sequence in one `sudo -S bash -c` means one password unlocks
-    # all of it.
-    inner = (
-        "launchctl enable system/com.openssh.sshd; "
-        "launchctl load -w /System/Library/LaunchDaemons/ssh.plist; "
-        "systemsetup -setremotelogin on; "
-        "echo SSH-DONE"
-    )
-    line = 'echo %s | sudo -S bash -c "%s"' % (ACCOUNT_PASS, inner)
+    #   echo admin | sudo -S launchctl enable system/com.openssh.sshd; launchctl load -w ...
+    #   Load failed: 5: Input/output error
+    #   You need administrator access to run this tool... exiting!
+    #
+    # The double quotes around the bash -c argument were never delivered, so the
+    # command list fell apart: only the first entry ran under sudo, and systemsetup
+    # reported 'you need administrator access' because it was no longer sudo.
+    #
+    # systemsetup -setremotelogin on is the whole job by itself - it is what turns
+    # sshd on - so the launchd plumbing is dropped and the line is reduced to
+    # characters that survived the last attempt: letters, spaces, a dash and a pipe.
+    line = 'echo %s | sudo -S systemsetup -setremotelogin on' % ACCOUNT_PASS
     for ch in line:
         if ch == " ":
             screen.key("spc")
-        elif ch in "\"'":
-            screen.key("apostrophe" if ch == "'" else "shift-apostrophe")
-        elif ch in "|;.\\-/":
-            screen.key({"|": "shift-backslash", ";": "semicolon", ".": "dot",
-                        "\\": "backslash", "-": "minus", "/": "slash"}[ch])
-        elif ch.isupper():
-            screen.key("shift-" + ch.lower())
-        else:
+        elif ch == "|":
+            screen.key("shift-backslash")
+        elif ch == "-":
+            screen.key("minus")
+        elif ch.isdigit():
             screen.key(ch)
-        time.sleep(0.06)
-    time.sleep(1)
+        elif ch.isalpha():
+            screen.key(ch)
+        time.sleep(0.15)
     screen.key("ret")
-    time.sleep(15)
+    time.sleep(20)
     screen.grab(prefix + "-ssh-cmd")
     log("ssh command issued; see the frame for its output")
 
