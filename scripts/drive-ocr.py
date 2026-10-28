@@ -534,16 +534,31 @@ def enable_ssh_from_desktop(screen, log, prefix):
         time.sleep(wait)
 
     # Short, lowercase, and split so nothing can be truncated.
-    send("cd /system/library/launchdaemons", wait=3)
-    send("sudo launchctl load -w ssh.plist", wait=5)
-    send(ACCOUNT_PASS, wait=14)          # sudo asks here; the field is focused
-    screen.grab(prefix + "-ssh-cmd")
+    # systemsetup, with the password typed at its own prompt.
+    #
+    # The last run proved the channel works: cd arrived, sudo arrived, and Password:
+    # appeared and was answered with no error. What did not happen is sshd starting -
+    # "launchctl list ssh" said "Could not find service ssh", and the service is
+    # really called com.openssh.sshd, so that line only proves my query was wrong.
+    # Port 22 still refused, so the load did not take either.
+    #
+    # An earlier systemsetup attempt failed for a different and now-fixed reason: the
+    # password went through a pipe (echo admin | sudo -S ...), and that pipe was the
+    # thing not being delivered - the frame showed "admin" printed on its own line and
+    # sudo silently getting nothing. Typing the password at the prompt avoids it.
+    #
+    # Every command here is lowercase and short.
+    send("sudo systemsetup -getremotelogin", wait=6)
+    screen.grab(prefix + "-ssh-state")
 
-    # Read the result back in one short command, so a failure is visible rather than
-    # inferred from the probe.
-    send("sudo launchctl list ssh", wait=8)
+    send("sudo systemsetup -setremotelogin on", wait=6)
+    send(ACCOUNT_PASS, wait=10)
+    screen.grab(prefix + "-ssh-set")
+
+    # Read the state back. "Remote Login: On" is the line to look for.
+    send("sudo systemsetup -getremotelogin", wait=6)
     screen.grab(prefix + "-ssh-check")
-    log("ssh: terminal commands issued")
+    log("ssh: systemsetup commands issued")
     return True
 
 
