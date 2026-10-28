@@ -519,29 +519,55 @@ def enable_ssh_from_desktop(screen, log, prefix):
         log("ssh: no Remote Login in the search results either")
         return False
 
-    log("found Remote Login at %s" % (target,))
+    log("found Remote Login in the search results at %s" % (target,))
 
-    log("found Remote Login at %s" % (target,))
-
-    # Click the switch, which is right of the label. A click on the label itself only
-    # selects the row.
-    switch = (target[0] + 300, target[1])
-    log("clicking the Remote Login switch at %s" % (switch,))
-    screen.click(switch[0], switch[1])
+    # Clicking the SEARCH RESULT navigates to the pane; it does not toggle anything.
+    # The switch lives in the content area on the right, next to the "Remote Login"
+    # row there. So: click the result, wait for the pane, then find the row again and
+    # click the switch beside it.
+    screen.click(target[0], target[1])
     time.sleep(6)
-    screen.grab(prefix + "-ssh-toggled")
+    screen.grab(prefix + "-remote-pane")
 
-    # Turning it on raises an administrator prompt; type the password and confirm.
-    after = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
-    joined = " ".join(w[0] for w in after).lower()
-    log("after toggle: %s" % " ".join(w[0] for w in after)[:200])
-    if "password" in joined or "administrator" in joined:
+    # On the pane the row reads "Remote Login" with its switch at the right edge of
+    # the content area. The switch is far to the right of the label, near x=1300.
+    def find_row():
+        pngx = screen.grab(prefix + "-remote-row")
+        cands = []
+        for w in screen.text(pngx):
+            head = w[0].strip(":,").lower()
+            if head in ("remote", "remote login") or head.startswith("remote l"):
+                cands.append((w[1], w[2]))
+        # The pane row is on the right half; the sidebar entry is on the left.
+        cands = [c for c in cands if c[0] > 800]
+        cands.sort(key=lambda c: c[1])
+        return cands[0] if cands else None
+
+    row = find_row()
+    if row is None:
+        log("ssh: Remote Login row not found in the pane after searching")
+        return False
+
+    log("Remote Login row at %s; clicking its switch" % (row,))
+    # The switch sits at the right edge of the content area, on the same line.
+    screen.click(1300, row[1])
+    time.sleep(6)
+    png_toggled = screen.grab(prefix + "-ssh-toggled")
+
+    # Enabling remote login raises an administrator prompt. Type the password and
+    # confirm; the field is already focused when the sheet appears.
+    words_after = screen.text(screen.grab(prefix + "-ssh-after-toggle"))
+    text_after = " ".join(w[0] for w in words_after).lower()
+    log("after toggle: %s" % " ".join(w[0] for w in words_after)[:220])
+    if "password" in text_after or "administrator" in text_after or "name" in text_after:
         log("administrator prompt; typing the password")
         screen.type(ACCOUNT_PASS, delay=0.2)
         time.sleep(1)
         screen.key("ret")
-        time.sleep(6)
+        time.sleep(8)
         screen.grab(prefix + "-ssh-confirmed")
+        log("after password -> %s" % " ".join(
+            w[0] for w in screen.text(screen.grab(prefix + "-ssh-final")))[:200])
 
     return True
 
