@@ -394,51 +394,48 @@ def find_wanted_country(words):
 
 
 def probe_ssh(log, host="127.0.0.1", port=2222, user=None, attempts=8, delay=6):
-    """Say whether remote login is reachable, and log the evidence either way.
+    """Say whether sshd is reachable, FROM THE RIGHT NETWORK NAMESPACE.
 
-    QEMU forwards the guest port 22 to 2222 on the host, and the driver turns remote
-    login on from Terminal. The two are measured separately because they fail
-    separately: a forward that is up with no listener answers "connection refused",
-    and that is exactly what earlier runs showed even after systemsetup reported
-    "Remote Login: On".
+    THIS PROBE COULD NEVER WORK. qemu runs inside the driver container, and hostfwd
+    binds port 22 to that container's loopback. This script runs on the GitHub runner,
+    outside the container - so 127.0.0.1:2222 here refuses no matter how healthy the
+    guest is. Eight retries proved only that the two namespaces are separate, and the
+    conclusion drawn from them - "sshd did not start" - was wrong: the guest had
+    already reported "Remote Login: On" twice in its own Terminal.
 
-    Retried, because systemsetup returns as soon as it has written the setting, while
-    launchd takes a few seconds more to start sshd and bind the port. A single probe a
-    moment later reports refused and looks like a failure when the port simply was not
-    up yet.
+    So the check runs where qemu runs. docker exec enters that namespace and connects
+    to the forwarded port from inside it.
     """
-    import socket as _socket
-    user = user or ACCOUNT_USER
+    import subprocess as _sp
 
-    def tcp_open():
-        s = _socket.socket()
-        s.settimeout(8)
-        try:
-            s.connect((host, port))
-            try:
-                banner = s.recv(128).decode("utf-8", "replace").strip()
-            except Exception:
-                banner = ""
-            return True, banner
-        except Exception as exc:
-            return False, str(exc)
-        finally:
-            s.close()
+    # A tiny python client, so nothing depends on nc or bash's /dev/tcp being installed
+    # in whichever image is running.
+    client = "\n".join([
+        "import socket",
+        "s = socket.socket()",
+        "s.settimeout(4)",
+        "try:",
+        "    s.connect(('127.0.0.1', %d))" % port,
+        "    print('OPEN')",
+        "except Exception as e:",
+        "    print('CLOSED', e)",
+    ])
 
     for i in range(attempts):
-        opened, detail = tcp_open()
-        log("ssh probe %d/%d: tcp %s:%d open=%s detail=%r"
-            % (i + 1, attempts, host, port, opened, detail))
-        if opened:
-            if "ssh" in detail.lower():
-                log("ssh probe: sshd is serving on %d" % port)
-            else:
-                log("ssh probe: port %d open, banner is not ssh" % port)
+        try:
+            r = _sp.run(["docker", "exec", "driver", "python3", "-c", client],
+                        capture_output=True, text=True, timeout=30)
+            out = (r.stdout + r.stderr).strip()[:200]
+        except Exception as exc:
+            out = "docker exec failed: %s" % exc
+        log("ssh probe %d/%d inside the driver container: %r" % (i + 1, attempts, out))
+        if "OPEN" in out:
+            log("ssh probe: port %d accepts connections where qemu lives" % port)
             return True
         if i + 1 < attempts:
             time.sleep(delay)
 
-    log("ssh probe: still refused after %d attempts - sshd is not listening" % attempts)
+    log("ssh probe: port %d never opened inside the container" % port)
     return False
 
 
