@@ -45,7 +45,7 @@ permissions:
   # failure surfaces far from its cause: 'docker create' then reports
   # 'pull access denied for assets', which reads like a missing container name
   # rather than a permissions problem.
-  packages: read
+  packages: write
   # checks: write is what lets log-stream create and update the check run it
   # streams into. Without it the action answers:
   #   cannot create a check run (403): Resource not accessible by integration
@@ -345,3 +345,55 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0
+
+      # Publish the driven disk to the registry, so the next run can start from a
+      # disk that already reaches the desktop instead of replaying Setup Assistant.
+      #
+      # This is the step that was missing. Until now every run pulled the original
+      # bake disk, walked the whole wizard again - about fifteen minutes - just to
+      # retry the ssh step, and threw the result away as an artifact. Publishing turns
+      # that into: pull a desktop disk, boot it, done.
+      #
+      # Only published when the driver actually reported a desktop. A disk that
+      # stopped at the account pane is not an appliance, and putting it in the
+      # registry under a name that means "ready to boot" would be a lie that the next
+      # run silently relies on.
+      - name: publish the desktop disk to ghcr
+        if: always()
+        run: |
+          set -eux
+          if ! grep -q "DESKTOP REACHED" frames/frame-drive.log 2>/dev/null; then
+            echo "::warning::the driver never reported a desktop; not publishing"
+            exit 0
+          fi
+          if [ ! -s macos-desktop.qcow2 ]; then
+            echo "::warning::macos-desktop.qcow2 is missing; not publishing"
+            exit 0
+          fi
+
+          curl -sSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin oras
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          # The tag records what this disk is: driven to a desktop, on macOS 14.
+          REF="ghcr.io/easydev-org/golden-macos:desktop"
+          {
+            echo "source_run: ${{ github.run_id }}"
+            echo "git_sha: ${{ github.sha }}"
+            echo "driven_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "desktop_reached: yes"
+            echo "account: ${{ env.SETUP_USERNAME }}"
+            echo "--- qemu-img info ---"
+            qemu-img info macos-desktop.qcow2
+          } > desktop-disk.txt
+          cat desktop-disk.txt
+
+          oras push "$REF" \
+            --artifact-type application/vnd.easydev.golden-disk.v1+qcow2 \
+            --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            macos-desktop.qcow2:application/vnd.easydev.qcow2 \
+            desktop-disk.txt:text/plain
+
+          echo "=== published $REF ==="
