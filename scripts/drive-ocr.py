@@ -481,18 +481,46 @@ def enable_ssh_from_desktop(screen, log, prefix):
     log("sharing pane text: %s" % " | ".join("%s@%d,%d" % (w[0], w[1], w[2])
                                               for w in sorted(words, key=lambda w: (w[2], w[1])))[:600])
 
-    # Remote Login is the row to click. Its label is two words, so the row is found by
-    # looking for "remote" and taking that position - the switch sits to its right.
-    target = None
-    for w in words:
-        if w[0].strip(":,").lower() == "remote":
-            target = (w[1], w[2])
-            log("found Remote Login label at %s" % (target,))
-            break
+    # Find Remote Login by USING THE PANE'S OWN SEARCH BOX, not by scrolling.
+    #
+    # The first attempt opened the Sharing pane correctly - "Sharing@933,224" was in
+    # the extracted words - but the service list under it was absent: 39 tokens, the
+    # lowest at y=688, every one of them a sidebar entry. The row existed and was
+    # simply below the fold, and this driver has no scroll wheel.
+    #
+    # System Settings has a search field at the top of its sidebar. Typing "remote"
+    # into it puts Remote Login at the top of the results, where it can be clicked
+    # without scrolling at all. Every character is lowercase.
+
+    log("ssh: using the pane search box for Remote Login")
+    screen.click(760, 240)          # the search field, top of the sidebar
+    time.sleep(2)
+    screen.type("remote", delay=0.2)
+    time.sleep(5)
+    screen.grab(prefix + "-remote-search")
+
+    def find_remote_login():
+        pngx = screen.grab(prefix + "-remote-scan")
+        for w in screen.text(pngx):
+            if w[0].strip(":,").lower().startswith("remote"):
+                return (w[1], w[2])
+        return None
+
+    target = find_remote_login()
+    if target is None:
+        # The search may need a moment, or the field may not have taken focus.
+        for i in range(3):
+            log("ssh: Remote Login not visible after search (try %d)" % (i + 1))
+            time.sleep(3)
+            target = find_remote_login()
+            if target is not None:
+                break
 
     if target is None:
-        log("ssh: Remote Login row is not on screen; the pane may need scrolling")
+        log("ssh: Remote Login was never found in the Sharing pane")
         return False
+
+    log("found Remote Login at %s" % (target,))
 
     # Click the switch, which is right of the label. A click on the label itself only
     # selects the row.
