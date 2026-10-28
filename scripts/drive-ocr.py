@@ -514,26 +514,56 @@ def enable_ssh_from_desktop(screen, log, prefix):
     screen.type("remote login", delay=0.18)
     time.sleep(5)
     screen.grab(prefix + "-search-typed")
+
+    # DOWN then RETURN. With one result in the list, Return alone does nothing - the
+    # frames frame-opened and frame-after-toggle were pixel-identical at distinct=4679,
+    # so the pane never changed. Down moves the selection into the result list and
+    # Return activates it.
+    screen.key("down")
+    time.sleep(1)
     screen.key("ret")
-    time.sleep(7)
+    time.sleep(8)
     screen.grab(prefix + "-opened")
 
-    # Tab walks the focusable controls; the switch for remote login is among them.
-    # Space toggles whatever holds focus, so a few Tabs followed by a Space finds it.
-    for i in range(10):
-        screen.key("tab")
-        time.sleep(0.5)
-    screen.key("spc")
-    time.sleep(6)
+    # Now the pane itself is showing. Its Remote login row has a switch at the right
+    # edge; the row is found by reading the screen for the label on the RIGHT half,
+    # which avoids the sidebar entry with the same words.
+    def find_row(tag):
+        words_here = screen.text(screen.grab(prefix + "-row-" + tag))
+        remotes = [w for w in words_here
+                   if w[0].strip(":,").lower() == "remote" and w[1] > 800]
+        logins = [w for w in words_here
+                  if w[0].strip(":,").lower().startswith("log") and w[1] > 800]
+        for r in sorted(remotes, key=lambda w: w[2]):
+            for l in logins:
+                if abs(l[2] - r[2]) <= 14:
+                    return (r[1], r[2])
+        for w in words_here:
+            if w[0].strip(":,").lower() == "remote login" and w[1] > 800:
+                return (w[1], w[2])
+        return None
+
+    row = find_row("pane")
+    if row is None:
+        log("ssh: Remote login row not on screen; closing any popover and retrying")
+        screen.key("esc")
+        time.sleep(2)
+        row = find_row("pane2")
+
+    if row is None:
+        log("ssh: could not locate the Remote login row")
+        return False
+
+    log("Remote login row at %s; clicking the switch at (%d,%d)" % (row, 1234, row[1]))
+    screen.click(1234, row[1])
+    time.sleep(7)
     screen.grab(prefix + "-toggled")
 
     after = screen.text(screen.grab(prefix + "-after-toggle"))
     text_after = " ".join(w[0] for w in after).lower()
     log("after toggle: %s" % " ".join(w[0] for w in after)[:220])
 
-    # Enabling remote login prompts for an administrator password, in a sheet whose
-    # password field already has focus.
-    if "password" in text_after or "administrator" in text_after or "name" in text_after:
+    if "password" in text_after or "administrator" in text_after:
         log("administrator prompt; typing the password")
         screen.type(ACCOUNT_PASS, delay=0.2)
         time.sleep(1)
