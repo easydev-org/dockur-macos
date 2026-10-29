@@ -25,6 +25,11 @@ on:
         description: "macOS version to install (14, 15, 26)"
         required: false
         default: "14"
+      manual_install:
+        description: "Drive the installer with OCR instead of the unattended rc.cdrom patch (needed for 15 and 26)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -139,10 +144,32 @@ jobs:
           # MANUAL=N is what selects the automated branch; the image defaults to
           # Y. NET_ADMIN + /dev/net/tun are needed for a real NAT bridge, without
           # which macOS cannot reach Apple to fetch the rest of the installer.
+          #
+          # MANUAL=Y is for the versions the automated branch cannot install. That
+          # branch binary-patches rc.cdrom.sh inside the recovery image, and the patch
+          # matches macOS 14 only:
+          #
+          #   Recovery bootstrap patch failed: Expected exactly one rc.cdrom.sh
+          #   bootstrap, found 0
+          #
+          # (upstream dockur/macos ships the same patch.py with the same
+          # SCRIPT_ORIGINAL, so this is not a version input problem - nobody has
+          # exercised that branch on 15 or 26.)
+          #
+          # With MANUAL=Y the guest boots Apple's real installer and waits to be
+          # clicked through, which means it needs a control channel. dockur passes
+          # ARGS straight through to qemu (entry.sh: exec qemu-system-x86_64 $ARGS),
+          # so a QMP socket can be added without touching anything else - and /storage
+          # is the bind mount, so the socket lands where the host can reach it.
+          ARGS_EXTRA=""
+          if [ "${{ github.event.inputs.manual_install }}" = "true" ]; then
+            ARGS_EXTRA='-qmp unix:/storage/monitor.qmp,server=on,wait=off'
+          fi
           docker run -d --name macbake \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
             -e VERSION=${{ github.event.inputs.macos_version }} -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
-            -e MANUAL=N \
+            -e MANUAL=${{ github.event.inputs.manual_install && 'Y' || 'N' }} \
+            -e ARGS="$ARGS_EXTRA" \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             "${{ needs.build.outputs.image }}"
           sleep 30
@@ -181,6 +208,7 @@ jobs:
       # stalled screen says more than another size reading ever did.
       - name: wait for the install to finish
         id: wait
+        if: github.event.inputs.manual_install != 'true'
         timeout-minutes: 100
         run: |
           set -eux
@@ -205,6 +233,66 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
+      # The manual branch: drive Apple's installer to Setup Assistant by clicking.
+      #
+      # Everything before this step is the SAME as the automated path - same image,
+      # same dockur container, same disk, same recovery image, same OpenCore. The only
+      # differences are MANUAL=Y (so the rc.cdrom patch is not attempted) and the QMP
+      # socket that the ARGS above adds, which is what makes clicking possible.
+      #
+      # The -setup disk this produces is the input to the next stage, which drives
+      # Setup Assistant to the desktop; that path is already proven on 14.
+      - name: drive the installer to Setup Assistant
+        if: github.event.inputs.manual_install == 'true'
+        timeout-minutes: 100
+        run: |
+          set -eux
+          V="${{ github.event.inputs.macos_version }}"
+          mkdir -p frames
+          chmod 777 frames
+
+          # The socket lives under /storage because that is the bind mount. dockur
+          # writes it there once qemu starts, which happens after the recovery image
+          # downloads - several minutes in.
+          for i in $(seq 1 120); do
+            [ -S "storage/monitor.qmp" ] && break
+            echo "[$((i*5))s] waiting for storage/monitor.qmp"
+            sleep 5
+          done
+          ls -la storage/ | head -20 || true
+          docker logs --tail 20 macbake || true
+
+          sudo apt-get install -y -qq tesseract-ocr
+          # The driver screenshots through QMP; qemu resolves the filename inside its
+          # own container, where /storage is the same directory this step sees.
+          sudo python3 scripts/drive-installer.py \
+            "$GITHUB_WORKSPACE/storage/monitor.qmp" \
+            "$GITHUB_WORKSPACE/frames/stage1" || true
+          sudo chown -R "$(id -u):$(id -g)" frames || true
+          echo "=== installer log ==="
+          tail -80 frames/stage1-installer.log 2>/dev/null || true
+
+      - name: did the manual install reach Setup Assistant
+        if: github.event.inputs.manual_install == 'true'
+        run: |
+          set -eux
+          if grep -q "SETUP ASSISTANT REACHED" frames/stage1-installer.log 2>/dev/null; then
+            echo "reached Setup Assistant"
+          else
+            echo "::error::the installer did not reach Setup Assistant; see the frames artifact"
+            exit 1
+          fi
+
+      - name: upload the installer frames
+        if: always() && github.event.inputs.manual_install == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-frames
+          path: |
+            frames/**
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: what is actually on the disk
         run: |
           set -eux
@@ -223,6 +311,7 @@ jobs:
       # already inside it. Copy it into OpenCore's driver directory and list it in
       # the config, and the AF0A container becomes readable.
       - name: give OpenCore an APFS driver from the disk itself
+        if: github.event.inputs.manual_install != 'true'
         id: apfs
         # Not fatal any more. The driver is a nice-to-have: bootstrap.done means
         # the install completed, and a completed install registers its own
@@ -325,6 +414,7 @@ jobs:
           docker stop -t 300 macstage2 || true
           docker rm -f macstage2 || true
       - name: boot the golden disk directly and look at the desktop
+        if: github.event.inputs.manual_install != 'true'
         id: desktop
         run: |
           set -eux

@@ -28,6 +28,26 @@ log() {
 for f in boot.img macos.rom macos.vars; do
   [ -s "$VMDIR/$f" ] || { log "missing $VMDIR/$f"; exit 1; }
 done
+
+# setup.dmg is the macOS recovery image. A disk that already holds an installed system
+# does not need it, which is why this was never required before - but an EMPTY disk
+# does, and without it the guest has nothing to boot from: qemu starts, QMP answers,
+# and the screen stays black forever. That is what stage 1 ran into.
+#
+# It is optional so the same script still serves deploy-macos-desktop.yml, which boots
+# a finished disk and has no setup.dmg to give it.
+SETUP_DMG=""
+if [ -s "$VMDIR/setup.dmg" ]; then
+  SETUP_DMG="$VMDIR/setup.dmg"
+  log "recovery image $(du -h "$SETUP_DMG" | cut -f1), will attach at PCI 0x6"
+fi
+
+if [ -n "$SETUP_DMG" ]; then
+  SETUP_ARG="-drive file=$SETUP_DMG,id=SetupDisk,if=none,readonly=on
+  -device virtio-blk-pci,drive=SetupDisk,bus=pcie.0,addr=0x6,bootindex=8"
+else
+  SETUP_ARG=""
+fi
 log "disk $(du -h "$VMDIR/data.img" | cut -f1), starting qemu"
 
 CPU="Skylake-Client-v4,kvm=on,l3-cache=on,+hypervisor,+invtsc,vendor=GenuineIntel,vmx=off,vmware-cpuid-freq=on,-pdpe1gb,-spec-ctrl,+pcid,+invpcid,-tsc-deadline,+xsavec,+xsaves,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+smep,+xsave,+xsaveopt,+xgetbv1,+movbe,+rdrand,check"
@@ -61,6 +81,7 @@ qemu-system-x86_64 \
   -drive file="$VMDIR/data.img",id=data3,format=raw,cache=none,aio=native,discard=unmap,detect-zeroes=on,if=none \
   -device virtio-blk-pci,drive=data3,bus=pcie.0,addr=0xa,iothread=io2,bootindex=3 \
   -object iothread,id=io2 \
+  $SETUP_ARG \
   -drive file="$VMDIR/boot.img",id=OpenCore,format=raw,cache=unsafe,readonly=on,if=none \
   -device virtio-blk-pci,drive=OpenCore,bus=pcie.0,addr=0x5,bootindex=9 \
   -rtc base=utc \
