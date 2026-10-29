@@ -128,72 +128,91 @@ def main():
         screen.close()
         return 1
 
-    # The macOS installer offers: Restore from Time Machine, Install macOS,
-    # Safari, Disk Utility. The disk must be erased first, so Disk Utility.
-    for step in range(1, 60):
+    # The installer's list, whose entries were measured from a macOS 15 frame:
+    #
+    #   Restore from Time Machine   (958, 244)
+    #   Reinstall macOS Sequoia     (958, 327)
+    #   Safari                      (958, 420)
+    #   Disk Utility                (958, 512)
+    #   Continue                    (1141, 589)
+    #
+    # The previous version matched substrings in the whole pane text, and every entry
+    # here is followed by a sentence of description, so "disk utility" matched the
+    # prose on EVERY frame - including the frames after Disk Utility had been opened.
+    # That branch clicked, continued, and the install entry below it was never reached:
+    # fifty-nine steps of the same pane.
+    #
+    # Matching is now anchored to the label's own position: the left edge of every entry
+    # sits at x=958 and the descriptions are to the right and below, so a match within a
+    # few pixels of 958 on one of the five known rows is the clickable thing.
+    ROWS = (
+        (244, "restore from time machine"),
+        (327, "reinstall"),
+        (420, "safari"),
+        (512, "disk utility"),
+    )
+    COLUMN_X = 958
+
+    def entry(needle):
+        for y_expected, label in ROWS:
+            if label != needle:
+                continue
+            for word, x, y, _w, _h in words:
+                if label.split()[0] in word.lower() and abs(x - COLUMN_X) < 60                    and abs(y - y_expected) < 40:
+                    return (x, y)
+        return None
+
+    erased = False
+    for step in range(1, 80):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
         joined = " ".join(w[0] for w in words).lower()
         log("step %d: %s" % (step, joined[:150] or "(nothing)"))
 
-        # Setup Assistant is the boundary: stage 2 owns everything from here.
         if "country or region" in joined or "select your country" in joined:
             log("SETUP ASSISTANT REACHED at step %d" % step)
             screen.close()
             return 0
 
-        if "disk utility" in joined:
-            target = find(words, "disk utility")
-            if target:
-                log("opening Disk Utility at %s" % (target,))
-                screen.click(target[0], target[1])
-                time.sleep(10)
+        # Disk Utility first: the target disk arrives unformatted, and the install
+        # entry will refuse to run until something is erased.
+        #
+        # Once only. Disk Utility's own window carries the words "Disk Utility" in its
+        # title bar, so an unguarded check re-enters this branch from inside the tool
+        # and never leaves.
+        target = None if erased else entry("disk utility")
+        if target is not None:
+            log("opening Disk Utility at %s" % (target,))
+            screen.click(target[0], target[1])
+            time.sleep(12)
             continue
 
+        # Inside Disk Utility. "Erase" is the button that formats the selected disk.
         if "erase" in joined:
-            # Disk Utility's Erase button. The destination disk is already selected
-            # in its sidebar, so Erase opens a sheet with a format and a name.
             target = find(words, "erase")
-            if target:
+            if target is not None:
                 log("clicking Erase at %s" % (target,))
                 screen.click(target[0], target[1])
-                time.sleep(8)
-            continue
-
-        if "apfs" in joined and "erase" in joined:
-            # The erase sheet. Accept whatever is offered and confirm.
-            target = find(words, "erase")
-            if target:
-                log("confirming Erase at %s" % (target,))
-                screen.click(target[0], target[1])
-                time.sleep(15)
-            continue
-
-        # The install entry, whose label differs by version and was the reason this
-        # loop ran fifty-nine steps without moving. macOS 15 says
-        #
-        #   Reinstall macOS Sequoia - Install a new copy of macOS Sequoia onto your Mac
-        #
-        # so "install macos" never matches: there is no such phrase on the pane. The
-        # word to look for is "reinstall", with "install" as the fallback for versions
-        # that word it the other way.
-        if "reinstall" in joined or "install macos" in joined:
-            target = find(words, "reinstall", "install macos")
-            if target:
-                log("starting the install at %s" % (target,))
-                screen.click(target[0], target[1])
-                time.sleep(15)
+                time.sleep(10)
+                erased = True
                 continue
 
-        if "continue" in joined or "agree" in joined or "install" in joined:
+        target = entry("reinstall")
+        if target is not None:
+            log("starting the install at %s" % (target,))
+            screen.click(target[0], target[1])
+            time.sleep(15)
+            continue
+
+        if "continue" in joined or "agree" in joined:
             target = find(words, "continue", "agree")
-            if target:
+            if target is not None:
                 log("advancing at %s" % (target,))
                 screen.click(target[0], target[1])
                 time.sleep(12)
-            continue
+                continue
 
-        # Nothing recognised: press Return, which is the default button on most of
+# Nothing recognised: press Return, which is the default button on most of
         # these panes, and costs nothing when it is not.
         screen.key("ret")
         time.sleep(10)
