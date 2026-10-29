@@ -73,8 +73,30 @@ def main():
         with open(log_path, "a") as fh:
             fh.write(line + "\n")
 
-    screen = Screen(qmp_socket)
-    log("qmp connected")
+    # Wait for the QMP handshake, not merely for the socket file.
+    #
+    # qemu creates the socket before it is ready to speak: drive-in-container.sh
+    # reports "qemu is up" as soon as the process exists, and the first connect after
+    # that returns an empty read, which surfaces as
+    #
+    #   json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    #
+    # from inside QMP.__init__ while it parses the greeting. The socket is fine and
+    # qemu is fine; it simply has not sent its greeting yet. So the connect is retried
+    # until one of them produces a greeting that parses.
+    screen = None
+    for attempt in range(1, 31):
+        try:
+            screen = Screen(qmp_socket)
+            log("qmp connected on attempt %d" % attempt)
+            break
+        except Exception as exc:
+            log("qmp not ready (attempt %d): %s: %s"
+                % (attempt, type(exc).__name__, str(exc)[:120]))
+            time.sleep(10)
+    if screen is None:
+        log("qmp never became ready; giving up")
+        return 1
 
     # The recovery boot is slow and unreadable for minutes. Waiting for words rather
     # than for a fixed delay is what makes this work across versions and hosts.
