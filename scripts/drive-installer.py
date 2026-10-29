@@ -63,9 +63,22 @@ W, H = 1920, 1080
 # pressing this; clicking the entry alone only highlights it.
 CONTINUE_MENU = (1142, 588)
 
-# Row centres of the four recovery entries, averaged across 14, 15 and 26 frames.
-ROW_Y = (244, 330, 425, 520)
-ROW_X = 958
+# The recovery list, measured with tesseract on a captured frame. Every entry's label is
+# left-aligned at x=837 inside the window rather than centred, and the rows are 92px
+# apart:
+#
+#   Restore from Time Machine   y=232   x=837-1002
+#   Reinstall macOS Sequoia     y=324   x=837-986
+#   Safari                      y=416   x=837-870
+#   Disk Utility                y=508   x=837-901
+#   Continue                    y=585   x=1115-1169
+#
+# ROW_X was 958, read off a picture instead of through OCR, with an 80px tolerance - so
+# every one of these was excluded, since |837-958| is 121. row() could never match, and
+# the driver sat on "waiting for the recovery menu" while the menu was right there.
+ROW_Y = (232, 324, 416, 508)
+ROW_X = 837
+ROW_TOLERANCE = 40
 
 # Disk Utility's View menu, measured from a frame captured with the menu open. The item
 # that matters is Show All Devices, and its position matters more than it looks: it was
@@ -122,7 +135,7 @@ def row(words, index, *needles):
         low = word.lower()
         if not any(n in low for n in needles):
             continue
-        if abs(y - y_expected) > 40 or abs(x - ROW_X) > 80:
+        if abs(y - y_expected) > 40 or abs(x - ROW_X) > ROW_TOLERANCE:
             continue
         if best is None or abs(y - y_expected) < abs(best[1] - y_expected):
             best = (x, y)
