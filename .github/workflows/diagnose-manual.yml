@@ -1,0 +1,137 @@
+name: diagnose-manual
+
+# What dockur does with MANUAL=Y, observed rather than inferred.
+#
+# The manual branch needs two things from the container: somewhere the recovery image
+# and disk actually land, and a qemu control channel the runner can reach. Two attempts
+# assumed both and were wrong - storage/15/ stayed empty while the guest booted happily,
+# so the container is clearly using a path that is not the bind mount.
+#
+# Rather than guess a third time, this prints the container's own view: the shell
+# variables, the mount table, the qemu command line, and where the files ended up.
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_version:
+        description: "macOS version to inspect"
+        required: false
+        default: "15"
+      launcher_image:
+        description: "Image carrying qemu and the dockur scripts"
+        required: false
+        default: "ghcr.io/easydev-org/dockur-macos-launcher:14"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      - name: pull the launcher image
+        run: |
+          set -eux
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | sudo docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo docker pull "${{ github.event.inputs.launcher_image || 'ghcr.io/easydev-org/dockur-macos-launcher:14' }}"
+          sudo docker tag \
+            "${{ github.event.inputs.launcher_image || 'ghcr.io/easydev-org/dockur-macos-launcher:14' }}" \
+            macos-diag
+
+      # Where is STORAGE defined, and what does it evaluate to? src/install.sh does
+      # STORAGE="$STORAGE/${VERSION,,}", so the value before that line matters.
+      - name: read the container's own definitions
+        run: |
+          set -eux
+          sudo docker run --rm --entrypoint sh macos-diag -c '
+            echo "=== /etc files ==="
+            ls -la /etc/*.sh 2>/dev/null || true
+            echo "=== STORAGE mentions across the scripts ==="
+            grep -rn "STORAGE" /etc/*.sh 2>/dev/null | head -20 || true
+            echo "=== which script defines it ==="
+            grep -rn "^: \"\${STORAGE" /etc/*.sh 2>/dev/null || true
+            grep -rn "STORAGE:=" /etc/*.sh 2>/dev/null || true
+            grep -rn "export STORAGE" /etc/*.sh 2>/dev/null || true
+          ' 2>&1 | tail -40
+
+      - name: start it the way the bake job does, with MANUAL=Y and a QMP socket
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/storage"
+          sudo docker run -d --name diag \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=${{ github.event.inputs.macos_version }} \
+            -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -e ARGS='-qmp unix:/storage/monitor.qmp,server=on,wait=off' \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            macos-diag
+          sleep 60
+          sudo docker logs --tail 30 diag || true
+
+      # The decisive observation: the running qemu's full argv, and where its open
+      # files live. If ARGS was honoured there will be a -qmp somewhere in there.
+      - name: what qemu was actually told
+        run: |
+          set -eux
+          sudo docker exec diag sh -c '
+            echo "=== qemu process ==="
+            ps aux 2>/dev/null | grep -v grep | grep qemu || echo "no qemu yet"
+            echo
+            echo "=== full command line, one argument per line ==="
+            tr "\0" "\n" < /proc/1/cmdline 2>/dev/null || true
+            echo
+            echo "=== any qemu child ==="
+            for p in /proc/[0-9]*; do
+              if grep -qa qemu "$p/cmdline" 2>/dev/null; then
+                echo "pid ${p#/proc/}:"
+                tr "\0" "\n" < "$p/cmdline"
+              fi
+            done
+          ' 2>&1 | tail -80
+
+      - name: where the files actually are
+        run: |
+          set -eux
+          echo "=== host side: the bind mount ==="
+          find "$GITHUB_WORKSPACE/storage" -maxdepth 3 -exec ls -lad {} + 2>/dev/null | head -30 || true
+          du -sm "$GITHUB_WORKSPACE/storage" || true
+          echo
+          echo "=== container side: /storage ==="
+          sudo docker exec diag sh -c 'ls -laR /storage 2>/dev/null | head -40' || true
+          echo
+          echo "=== container side: anything named *.dmg, *.img, *.qmp, *.rom ==="
+          sudo docker exec diag sh -c 'find / -xdev \( -name "*.dmg" -o -name "data.img" -o -name "*.qmp" -o -name "macos.rom" \) 2>/dev/null | head -20' || true
+          echo
+          echo "=== container mount table ==="
+          sudo docker exec diag sh -c 'mount | head -20' || true
+
+      - name: keep the container log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-log
+          path: |
+            diag.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: stop
+        if: always()
+        run: |
+          sudo docker exec diag sh -c 'tail -200 /storage/diag.log 2>/dev/null || true' || true
+          sudo docker logs diag > diag.log 2>&1 || true
+          tail -100 diag.log || true
+          sudo docker rm -f diag >/dev/null 2>&1 || true
