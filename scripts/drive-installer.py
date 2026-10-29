@@ -46,6 +46,10 @@ Screen = _drive_ocr.Screen
 
 W, H = 1920, 1080
 
+# The recovery tool list's own Continue, measured from a macOS 15 frame. Every entry in
+# that list is opened by selecting it and pressing this, not by clicking the entry.
+CONTINUE_BUTTON = (1142, 588)
+
 
 def find(words, *needles):
     """Position of the first word containing any needle, or None.
@@ -180,11 +184,20 @@ def main():
         # Once only. Disk Utility's own window carries the words "Disk Utility" in its
         # title bar, so an unguarded check re-enters this branch from inside the tool
         # and never leaves.
+        # ONCE ONLY, and then Continue: the recovery tool LIST is a selection list.
+        #
+        # Clicking an entry only highlights it - the frame after seventy-nine clicks
+        # still showed the menu with Disk Utility greyed as selected, unmoved. The
+        # button at (1142,588) is what opens it. Without that second click every
+        # iteration re-selected the same row and nothing could ever happen.
         target = None if erased else entry("disk utility")
         if target is not None:
-            log("opening Disk Utility at %s" % (target,))
+            log("selecting Disk Utility at %s" % (target,))
             screen.click(target[0], target[1])
-            time.sleep(12)
+            time.sleep(2)
+            log("pressing Continue at %s to open it" % (CONTINUE_BUTTON,))
+            screen.click(CONTINUE_BUTTON[0], CONTINUE_BUTTON[1])
+            time.sleep(15)
             continue
 
         # Inside Disk Utility. "Erase" is the button that formats the selected disk.
@@ -199,9 +212,12 @@ def main():
 
         target = entry("reinstall")
         if target is not None:
-            log("starting the install at %s" % (target,))
+            log("selecting Reinstall at %s" % (target,))
             screen.click(target[0], target[1])
-            time.sleep(15)
+            time.sleep(2)
+            log("pressing Continue at %s to start it" % (CONTINUE_BUTTON,))
+            screen.click(CONTINUE_BUTTON[0], CONTINUE_BUTTON[1])
+            time.sleep(20)
             continue
 
         if "continue" in joined or "agree" in joined:
