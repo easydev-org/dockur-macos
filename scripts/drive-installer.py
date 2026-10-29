@@ -84,11 +84,23 @@ def main():
     # from inside QMP.__init__ while it parses the greeting. The socket is fine and
     # qemu is fine; it simply has not sent its greeting yet. So the connect is retried
     # until one of them produces a greeting that parses.
+    # The .qmp suffix matters. drive-in-container.sh creates TWO sockets:
+    #
+    #   -monitor "unix:/frames/monitor.sock,..."     HMP, speaks text
+    #   -qmp     "unix:/frames/monitor.sock.qmp,..." QMP, speaks JSON
+    #
+    # Connecting to the first and parsing its output as JSON is exactly what produced
+    #   JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+    # thirty times over five minutes while qemu was healthy the whole time. drive-ocr
+    # appends .qmp inside its own constructor, which is why the desktop stage never hit
+    # this; this script took the path verbatim.
+    qmp_path = qmp_socket if qmp_socket.endswith(".qmp") else qmp_socket + ".qmp"
+
     screen = None
     for attempt in range(1, 31):
         try:
-            screen = Screen(qmp_socket)
-            log("qmp connected on attempt %d" % attempt)
+            screen = Screen(qmp_path)
+            log("qmp connected on attempt %d (%s)" % (attempt, qmp_path))
             break
         except Exception as exc:
             log("qmp not ready (attempt %d): %s: %s"
