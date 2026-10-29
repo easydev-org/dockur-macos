@@ -240,12 +240,23 @@ def main():
                     #
                     # So it is located from the frame: a word ending in "iew" below the
                     # menu bar. That survives the truncation tesseract applies to it.
+                    # tesseract renders this button as "iew" on one frame and "iow" on
+                    # another - the capital V is dropped and the middle vowel guessed.
+                    # Matching a suffix is therefore too strict. What is stable is that
+                    # it is the leftmost toolbar control, sitting after the window title
+                    # and before Volume, at y~334. Both spellings are accepted and the
+                    # first candidate in that band wins.
                     view_btn = None
                     for word, x, y, w, _h in words:
                         low = word.strip().lower()
-                        if low.endswith("iew") and 300 < y < 380:
+                        if low in ("iew", "iow", "view", "vigw", "lew") and 300 < y < 380:
                             view_btn = (x + w // 2, y)
                             break
+                    if view_btn is None:
+                        # Fallback: the toolbar's own geometry. Volume is at x=1101, so
+                        # View - the first control - is around x=707, y=334.
+                        view_btn = (707, 339)
+                        log("View not matched; using the measured fallback %s" % (view_btn,))
                     if view_btn is None:
                         log("View button not found in this frame: %s" % text[:120])
                         time.sleep(5)
