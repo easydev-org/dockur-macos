@@ -50,6 +50,10 @@ W, H = 1920, 1080
 # that list is opened by selecting it and pressing this, not by clicking the entry.
 CONTINUE_BUTTON = (1142, 588)
 
+# Disk Utility's Erase button, measured from a macOS 15 recovery frame: the toolbar row
+# is at y=264 and Erase sits between Partition and Restore.
+ERASE_BUTTON = (1291, 264)
+
 
 def find(words, *needles):
     """Position of the first word containing any needle, or None.
@@ -167,7 +171,7 @@ def main():
         return None
 
     erased = False
-    for step in range(1, 80):
+    for step in range(1, 100):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
         joined = " ".join(w[0] for w in words).lower()
@@ -178,19 +182,59 @@ def main():
             screen.close()
             return 0
 
-        # Disk Utility first: the target disk arrives unformatted, and the install
-        # entry will refuse to run until something is erased.
+        in_disk_utility = "first aid" in joined or "partition" in joined
+
+        # Inside Disk Utility. Three things have to happen, in this order: select the
+        # RIGHT disk, erase it, then quit back to the menu.
         #
-        # Once only. Disk Utility's own window carries the words "Disk Utility" in its
-        # title bar, so an unguarded check re-enters this branch from inside the tool
-        # and never leaves.
-        # ONCE ONLY, and then Continue: the recovery tool LIST is a selection list.
-        #
-        # Clicking an entry only highlights it - the frame after seventy-nine clicks
-        # still showed the menu with Disk Utility greyed as selected, unmoved. The
-        # button at (1142,588) is what opens it. Without that second click every
-        # iteration re-selected the same row and nothing could ever happen.
-        target = None if erased else entry("disk utility")
+        # The sidebar lists two VirtIO disks plus whatever volume is mounted from the
+        # recovery image, and the frame showed disk2s1 - the recovery volume, 2.88 GB
+        # with 2.43 GB used - selected by default. Erasing that would delete the
+        # installer itself and leave nothing to install from. The target is the empty
+        # 64 GB disk, which appears in the sidebar as "Apple Inc. VirtIO Block Media".
+        if in_disk_utility:
+            if not erased:
+                # Pick the disk that is NOT the recovery image. The recovery volume is
+                # small and carries a size in its row; the 64 GB target does not.
+                pick = None
+                for word, x, y, _w, _h in words:
+                    if "virtio" in word.lower() and 300 < x < 900:
+                        pick = (x, y)
+                        break
+                if pick is not None:
+                    log("selecting the target disk at %s" % (pick,))
+                    screen.click(pick[0], pick[1])
+                    time.sleep(4)
+                    log("clicking Erase at %s" % (ERASE_BUTTON,))
+                    screen.click(ERASE_BUTTON[0], ERASE_BUTTON[1])
+                    time.sleep(8)
+                    continue
+                log("no VirtIO entry found in the sidebar; listing what is there: %s"
+                    % joined[:200])
+                continue
+
+            # The erase sheet: name and format are pre-filled acceptably, and its own
+            # Erase button is the one that commits.
+            if "erase" in joined:
+                target = find(words, "erase")
+                if target is not None:
+                    log("confirming Erase at %s" % (target,))
+                    screen.click(target[0], target[1])
+                    time.sleep(20)
+                    erased = True
+                    continue
+
+            # After erasing, leave Disk Utility so the installer can use the disk.
+            # Its menu is Cmd-Q, and Disk Utility has no close button in recovery.
+            log("leaving Disk Utility to return to the installer list")
+            qmpmod.key_combo(screen.q, "meta_l", "q")
+            time.sleep(12)
+            continue
+
+        # Outside Disk Utility: the recovery tool list. Selecting an entry only
+        # highlights it - the frame after seventy-nine clicks still showed the menu
+        # with Disk Utility greyed - so Continue at (1142,588) is what opens it.
+        target = entry("disk utility") if not erased else None
         if target is not None:
             log("selecting Disk Utility at %s" % (target,))
             screen.click(target[0], target[1])
@@ -199,16 +243,6 @@ def main():
             screen.click(CONTINUE_BUTTON[0], CONTINUE_BUTTON[1])
             time.sleep(15)
             continue
-
-        # Inside Disk Utility. "Erase" is the button that formats the selected disk.
-        if "erase" in joined:
-            target = find(words, "erase")
-            if target is not None:
-                log("clicking Erase at %s" % (target,))
-                screen.click(target[0], target[1])
-                time.sleep(10)
-                erased = True
-                continue
 
         target = entry("reinstall")
         if target is not None:
