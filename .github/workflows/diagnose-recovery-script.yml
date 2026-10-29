@@ -26,10 +26,6 @@ name: diagnose-recovery-script
 on:
   workflow_dispatch:
     inputs:
-      macos_version:
-        description: "macOS version whose recovery image to inspect"
-        required: false
-        default: "15"
       launcher_image:
         description: "Image carrying the dockur scripts"
         required: false
@@ -41,6 +37,15 @@ permissions:
 
 jobs:
   extract:
+    # Two versions at once, because the question is comparative: patch.py finds its
+    # needle in the 14 image and not in the 15 image, and only a side-by-side run says
+    # whether the text changed or the container layout did.
+    strategy:
+      fail-fast: false
+      matrix:
+        version:
+          - "14"
+          - "15"
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -63,7 +68,7 @@ jobs:
       - name: let the container download the recovery image
         run: |
           set -eux
-          V="${{ github.event.inputs.macos_version }}"
+          V="${{ matrix.version }}"
           mkdir -p "$GITHUB_WORKSPACE/storage"
 
           sudo docker run -d --name dlg \
@@ -86,33 +91,62 @@ jobs:
           ls -la "storage/$V/" || true
           sudo docker rm -f dlg >/dev/null 2>&1 || true
 
-      # Ask patch.py itself. It already decodes every chunk of this DMG in order to
-      # search it, so its decode step is reused with the search aimed at a word the
-      # script always contains.
+      # THE COMPARATIVE QUESTION.
       #
-      # Two earlier attempts went the long way round and both failed for their own
-      # reasons: qemu-img produced a 3.2 GB raw image whose grep hits were HFS+ catalog
-      # nodes at 248 MB, and 7-Zip's extraction did not surface the file either. Reading
-      # the container properly is what patch.py already does.
-      - name: dump the chunks containing the script
+      # patch.py succeeds on the 14 image and fails on the 15 image with
+      # "Expected exactly one rc.cdrom.sh bootstrap, found 0". Two possible causes, and
+      # they need different fixes:
+      #
+      #   the text of rc.cdrom.sh changed between releases   -> new needle
+      #   the DMG no longer stores that file where it did    -> different approach entirely
+      #
+      # Running the same three searches over both images distinguishes them. The first is
+      # SCRIPT_ORIGINAL's own opening line, which is what patch.py looks for; the second
+      # is a word the script contains but which also appears in binaries; the third is the
+      # bootstrap the patch writes in, in case an image is already patched.
+      - name: search both images for the same three strings
         run: |
           set -ux
-          V="${{ github.event.inputs.macos_version }}"
+          V="${{ matrix.version }}"
           SRC="storage/$V/setup.dmg"
           [ -s "$SRC" ] || { echo "::error::no setup.dmg"; exit 1; }
           ls -la "$SRC"
 
-          python3 src/install/recovery/patch.py --dump "$SRC" > /tmp/dump.txt 2>&1 || true
-          echo "dump size: $(wc -c < /tmp/dump.txt) bytes"
-          head -400 /tmp/dump.txt
+          echo "########## version $V ##########"
+
+          echo "===== 1. SCRIPT_ORIGINAL opening line ====="
+          python3 src/install/recovery/patch.py --dump "$SRC" \
+            'launchd passes the "boot mode" to us' > /tmp/d1.txt 2>&1 || true
+          tail -3 /tmp/d1.txt
+
+          echo "===== 2. the word the script contains ====="
+          python3 src/install/recovery/patch.py --dump "$SRC" 'diskarbitrationd' > /tmp/d2.txt 2>&1 || true
+          tail -3 /tmp/d2.txt
+
+          echo "===== 3. rc.cdrom.sh itself ====="
+          python3 src/install/recovery/patch.py --dump "$SRC" 'rc.cdrom.sh' > /tmp/d3.txt 2>&1 || true
+          tail -3 /tmp/d3.txt
+
+          echo "===== 4. mount_9p installstate (what the patch writes) ====="
+          python3 src/install/recovery/patch.py --dump "$SRC" 'mount_9p' > /tmp/d4.txt 2>&1 || true
+          tail -3 /tmp/d4.txt
+
+          {
+            echo "########## version $V ##########"
+            for f in /tmp/d1.txt /tmp/d2.txt /tmp/d3.txt /tmp/d4.txt; do
+              echo "----- $f -----"
+              cat "$f"
+            done
+          } > "/tmp/dump-$V.txt"
+          wc -c "/tmp/dump-$V.txt"
 
       - name: keep the extraction
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-context
+          name: recovery-context-${{ matrix.version }}
           path: |
-            /tmp/dump.txt
+            /tmp/dump-*.txt
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0

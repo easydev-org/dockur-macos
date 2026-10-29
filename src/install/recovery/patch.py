@@ -121,7 +121,12 @@ def dump_mode(path, needle=b"diskarbitrationd"):
 
 def main():
     if len(sys.argv) > 2 and sys.argv[1] == "--dump":
-        return dump_mode(sys.argv[2])
+        # An optional needle, so the same code can ask the comparative question: does
+        # the string patch.py searches for exist in THIS image? Running it against 14 and
+        # 15 with SCRIPT_ORIGINAL's own prefix is what distinguishes "the text changed"
+        # from "the container layout changed".
+        needle = sys.argv[3].encode() if len(sys.argv) > 3 else b"diskarbitrationd"
+        return dump_mode(sys.argv[2], needle)
 
     path = sys.argv[1]
 
