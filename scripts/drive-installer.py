@@ -111,6 +111,11 @@ SHOW_ALL_DEVICES = (345, 63)
 ERASE_BUTTON = (1290, 336)
 SIDEBAR_X = 380
 
+# Sidebar row heights and the x to click inside them, from measured frames. The rows sit
+# under the "Internal" heading and are 28px apart; x=540 is inside the labels.
+SIDEBAR_ROWS_Y = (379, 407, 435)
+SIDEBAR_CLICK_X = 540
+
 
 def words_of(screen, prefix, tag):
     return screen.text(screen.grab("%s-%s" % (prefix, tag)))
@@ -280,14 +285,18 @@ def main():
                 # earlier version, looking for "64", never found it and kept reporting
                 # "no row reported a large capacity". The absence of both a size and a
                 # child is what separates the unformatted disk from the two images.
-                # Only the sidebar, x<700. The right-hand pane repeats
-                # "VirtIO Block Media" as the selected device's title, and treating that
-                # as a row made the driver click x=927 - the detail pane - which selects
-                # nothing and explains the alternating "row at (540,379)" /
-                # "row at (927,389)" in the log.
-                rows = [(w[2], w[1], w[0]) for w in words
-                        if ("virtio" in w[0].lower() or "virtl" in w[0].lower())
-                        and w[1] < 700]
+                # Where the sidebar rows are, taken from measured frames rather than
+                # found by text. Trying to filter on x was wrong in both directions: with
+                # no filter the right pane's repeated "VirtIO Block Media" title was
+                # clicked as if it were a row, and with x<700 whole frames came back
+                # empty because the sidebar's left edge moves with the window.
+                #
+                # The ROWS themselves are at fixed heights under the "Internal" heading,
+                # which is what the measure gave: 379, 407, 435. Each is clicked and the
+                # right pane consulted, so a wrong guess costs one click rather than
+                # stalling the loop.
+                rows = [(y, SIDEBAR_CLICK_X, "row@%d" % y)
+                        for y in SIDEBAR_ROWS_Y]
                 log("sidebar candidates: %s" % (rows,))
 
                 target_row = None
@@ -329,7 +338,21 @@ def main():
                 time.sleep(4)
                 screen.grab("%s-after-erase-%02d" % (prefix, step))
                 after = words_of(screen, prefix, "after-erase-ocr-%02d" % step)
-                log("after Erase: %s" % joined(after)[:220])
+                after_text = joined(after)
+                log("after Erase: %s" % after_text[:220])
+
+                # The sheet is the point of the click. Recognise it, so that a click which
+                # did nothing is retried instead of being treated as done - that is what
+                # happened before: erase_clicked was set, the toolbar Erase was pressed on
+                # each pass, and the loop could not tell a failed open from a slow one.
+                sheet_open = ("format" in after_text or "scheme" in after_text
+                              or "name:" in after_text or "cancel" in after_text)
+                log("erase sheet open: %s" % sheet_open)
+                if not sheet_open:
+                    # Selection probably did not stick. Re-run the selection step.
+                    erase_clicked = False
+                    time.sleep(4)
+                    continue
                 time.sleep(6)
                 continue
 

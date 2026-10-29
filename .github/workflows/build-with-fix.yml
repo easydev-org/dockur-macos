@@ -307,7 +307,12 @@ jobs:
             sudo apt-get install -y -qq tesseract-ocr
             # The full drive, now that Show All Devices has a measured position. That one
             # menu item is what puts the empty 64 GiB disk into the sidebar at all.
-            sudo python3 scripts/drive-installer.py \
+            # Probing, not driving: click each sidebar row and record what the detail
+            # pane reports, so the row holding the 64 GB disk is identified by evidence
+            # rather than by another guessed coordinate. The last run reported success
+            # while disk2s1 - the 2.88 GB read-only recovery volume - stayed selected and
+            # Erase stayed greyed out.
+            sudo python3 scripts/probe-sidebar.py \
               "$GITHUB_WORKSPACE/frames/monitor.sock" \
               "$GITHUB_WORKSPACE/frames/stage1" || true
             sudo chown -R "$(id -u):$(id -g)" frames || true
