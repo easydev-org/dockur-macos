@@ -122,23 +122,29 @@ def joined(words):
 
 
 def row(words, index, *needles):
-    """Position of entry `index`, if its label is where that row should be.
+    """Position of the clickable element for entry `index`, or None.
 
-    Two conditions, and both are needed. The label has to contain one of the needles -
-    the install entry reads "Reinstall macOS Sonoma/Sequoia/Tahoe" and the browser reads
-    "Safari" or "Web Browser" - and it has to sit near the row's own y and near x=ROW_X.
-    Without the positional half, the description text beside each title matches first.
+    `words` come from tesseract as individual WORDS, not lines: "Disk Utility" arrives as
+    ("Disk", 837, 508) and ("Utility", 866, 508). Matching a needle against a single word
+    therefore never succeeds for a two-word label, which is what kept this on "waiting for
+    the recovery menu" - the phrase "disk utility" is in no single token.
+
+    So the needles are single words, and the ROW is pinned by y: each of the four entries
+    sits at a known height, and the description is 18px below its title, so a tolerance of
+    40 keeps the match on the title. The returned point is the left edge of the label plus
+    a little, which is inside the row's clickable area.
     """
     y_expected = ROW_Y[index]
     best = None
-    for word, x, y, _w, _h in words:
-        low = word.lower()
-        if not any(n in low for n in needles):
+    for word, x, y, w, _h in words:
+        low = word.lower().strip(".,:;")
+        if not any(low == n or low.startswith(n) for n in needles):
             continue
-        if abs(y - y_expected) > 40 or abs(x - ROW_X) > ROW_TOLERANCE:
+        if abs(y - y_expected) > 40:
             continue
         if best is None or abs(y - y_expected) < abs(best[1] - y_expected):
-            best = (x, y)
+            # Click near the middle of the label, not on its first glyph.
+            best = (x + w // 2, y)
     return best
 
 
@@ -284,7 +290,7 @@ def main():
 
         # --- recovery menu ------------------------------------------------------
         if not erased:
-            du = row(words, 3, "disk utility")
+            du = row(words, 3, "disk")
             if du is not None:
                 log("opening Disk Utility")
                 screen.click(du[0], du[1])
@@ -297,7 +303,7 @@ def main():
             continue
 
         if not installing:
-            inst = row(words, 1, "reinstall")
+            inst = row(words, 1, "reinstall", "install")
             if inst is not None:
                 log("starting the reinstall")
                 screen.click(inst[0], inst[1])
