@@ -145,31 +145,27 @@ jobs:
           # Y. NET_ADMIN + /dev/net/tun are needed for a real NAT bridge, without
           # which macOS cannot reach Apple to fetch the rest of the installer.
           #
-          # MANUAL=Y is for the versions the automated branch cannot install. That
-          # branch binary-patches rc.cdrom.sh inside the recovery image, and the patch
-          # matches macOS 14 only:
+          # MANUAL=Y is for the versions the automated branch cannot install: that
+          # branch binary-patches rc.cdrom.sh in the recovery image, and the patch
+          # matches macOS 14 only ("Expected exactly one rc.cdrom.sh bootstrap,
+          # found 0"). Upstream ships the same patch.py with the same
+          # SCRIPT_ORIGINAL, so no version input fixes it.
           #
-          #   Recovery bootstrap patch failed: Expected exactly one rc.cdrom.sh
-          #   bootstrap, found 0
+          # In BOTH cases this container is only asked to PREPARE: it downloads the
+          # recovery image and writes setup.dmg, data.img, boot.img, macos.rom and
+          # macos.vars into /storage/<version>/, which is the bind mount. The next
+          # step then starts qemu itself, which is what deploy-macos-desktop does and
+          # what makes the QMP socket reachable.
           #
-          # (upstream dockur/macos ships the same patch.py with the same
-          # SCRIPT_ORIGINAL, so this is not a version input problem - nobody has
-          # exercised that branch on 15 or 26.)
-          #
-          # With MANUAL=Y the guest boots Apple's real installer and waits to be
-          # clicked through, which means it needs a control channel. dockur passes
-          # ARGS straight through to qemu (entry.sh: exec qemu-system-x86_64 $ARGS),
-          # so a QMP socket can be added without touching anything else - and /storage
-          # is the bind mount, so the socket lands where the host can reach it.
-          ARGS_EXTRA=""
-          if [ "${{ github.event.inputs.manual_install }}" = "true" ]; then
-            ARGS_EXTRA='-qmp unix:/storage/monitor.qmp,server=on,wait=off'
-          fi
+          # Not using ARGS to add a socket here: the measurement says it does not
+          # arrive. The container's own argv shows
+          #   -monitor unix:/run/shm/monitor.sock
+          # and no -qmp at all, and /run/shm is container-private tmpfs - so the
+          # socket exists but nobody outside can see it.
           docker run -d --name macbake \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
             -e VERSION=${{ github.event.inputs.macos_version }} -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=${{ github.event.inputs.manual_install && 'Y' || 'N' }} \
-            -e ARGS="$ARGS_EXTRA" \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             "${{ needs.build.outputs.image }}"
           sleep 30
@@ -251,24 +247,57 @@ jobs:
           mkdir -p frames
           chmod 777 frames
 
-          # The socket lives under /storage because that is the bind mount. dockur
-          # writes it there once qemu starts, which happens after the recovery image
-          # downloads - several minutes in.
+          # Wait for the ASSETS, not for a socket. The container writes setup.dmg,
+          # data.img, boot.img, macos.rom and macos.vars into /storage/$V; once all
+          # five are there it has done everything this step needs from it. The
+          # measured argv shows those exact paths are what qemu opens, so their
+          # presence is the real "prepared" signal.
           for i in $(seq 1 120); do
-            [ -S "storage/monitor.qmp" ] && break
-            echo "[$((i*5))s] waiting for storage/monitor.qmp"
+            if [ -s "storage/$V/setup.dmg" ] && [ -s "storage/$V/data.img" ] \
+               && [ -s "storage/$V/boot.img" ] && [ -s "storage/$V/macos.rom" ] \
+               && [ -s "storage/$V/macos.vars" ]; then
+              echo "assets ready after $((i*5))s"
+              break
+            fi
+            echo "[$((i*5))s] waiting for the recovery image and disk"
             sleep 5
           done
-          ls -la storage/ | head -20 || true
-          docker logs --tail 20 macbake || true
+          ls -la "storage/$V/" | head -20
+
+          # Stop it. Its qemu has no reachable control socket (/run/shm is
+          # container-private tmpfs) and it is about to boot the installer with
+          # nobody able to click. Handing qemu to the next step is the whole point.
+          docker rm -f macbake >/dev/null 2>&1 || true
+          sleep 5
+
+          # The same handover deploy-macos-desktop performs: dockur's assets in /vm,
+          # qemu started by our own script, socket on the bind mount.
+          mkdir -p vm
+          cp -f "storage/$V/boot.img"   vm/boot.img
+          cp -f "storage/$V/macos.rom"  vm/macos.rom
+          cp -f "storage/$V/macos.vars" vm/macos.vars
+          cp -f "storage/$V/setup.dmg"  vm/setup.dmg
+          cp --sparse=always "storage/$V/data.img" vm/data.img
+          ls -la vm/
+
+          chmod +x scripts/drive-in-container.sh
+          docker run -d --name macinst \
+            --device=/dev/kvm \
+            --entrypoint sh \
+            -v "$GITHUB_WORKSPACE/vm:/vm" \
+            -v "$GITHUB_WORKSPACE/frames:/frames" \
+            -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+            "${{ needs.build.outputs.image }}" /scripts/drive-in-container.sh
+          sleep 30
+          docker logs --tail 40 macinst || true
+          ls -la frames/ || true
 
           sudo apt-get install -y -qq tesseract-ocr
-          # The driver screenshots through QMP; qemu resolves the filename inside its
-          # own container, where /storage is the same directory this step sees.
           sudo python3 scripts/drive-installer.py \
-            "$GITHUB_WORKSPACE/storage/monitor.qmp" \
+            "$GITHUB_WORKSPACE/frames/monitor.sock" \
             "$GITHUB_WORKSPACE/frames/stage1" || true
           sudo chown -R "$(id -u):$(id -g)" frames || true
+          docker rm -f macinst >/dev/null 2>&1 || true
           echo "=== installer log ==="
           tail -80 frames/stage1-installer.log 2>/dev/null || true
 
