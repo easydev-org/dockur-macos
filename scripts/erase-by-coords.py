@@ -74,10 +74,12 @@ SIDEBAR_OTHERS = ((540, 402), (540, 430))
 SHEET_ERASE = (1146, 639)
 SHEET_CANCEL = (1066, 639)
 
-# The license pane, measured: the default focus sits on Disagree, so Return advances
+# The license pane. The Agree button is at y=713, measured by tesseract: its word box is
+# x=987-1023, y=707-720. An earlier value of 676 came from eyeballing the picture and was
+# 37px high - inside the pane, on nothing, which is why fifty-six clicks did nothing. the default focus sits on Disagree, so Return advances
 # nothing and the run stalls there indefinitely.
-LICENSE_AGREE = (1005, 676)
-LICENSE_DISAGREE = (899, 676)
+LICENSE_AGREE = (1005, 713)
+LICENSE_DISAGREE = (899, 713)
 
 
 def main():
