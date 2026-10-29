@@ -116,6 +116,11 @@ SIDEBAR_X = 380
 SIDEBAR_ROWS_Y = (379, 407, 435)
 SIDEBAR_CLICK_X = 540
 
+# The erase sheet's own Erase button, from a captured frame of the sheet:
+#   Cancel (1066,639)   Erase (1146,639)
+# The toolbar's Erase is at y=332, so position is what distinguishes them.
+ERASE_CONFIRM = (1146, 639)
+
 
 def words_of(screen, prefix, tag):
     return screen.text(screen.grab("%s-%s" % (prefix, tag)))
@@ -405,24 +410,36 @@ def main():
                 time.sleep(6)
                 continue
 
-            # The erase sheet asks for nothing that is not already filled in: Name is
-            # preset, Format defaults to APFS and Scheme to GUID Partition Map, which is
-            # what an install target needs. Its own Erase button is the one that commits,
-            # and it is the LOWEST such control on screen because the toolbar's Erase is
-            # at y=332 while the sheet's is near its bottom edge.
-            cands = [(w[2], w[1]) for w in words
-                     if w[0].strip().lower().startswith("era")]
-            if cands:
-                y_low, x_low = max(cands)
-                log("confirming Erase at (%d,%d)" % (x_low, y_low))
-                screen.click(x_low, y_low)
-                time.sleep(30)
-                erased = True
-                continue
+            # The erase sheet, measured from a real frame:
+            #
+            #   Erase "Apple Inc. VirtIO Block Media"?
+            #   Name:    [Untitled]              (862,518)-(1119,539)
+            #   Format:  [APFS]                  (862,541)-(1119,561)
+            #   Scheme:  [GUID Partition Map]    (862,564)-(1119,585)
+            #            [Cancel] (1066,639)  [Erase] (1146,639)
+            #
+            # Nothing needs changing. Format already reads APFS and Scheme already reads
+            # GUID Partition Map - the defaults are exactly what an install target needs -
+            # and the volume name does not matter to the installer, so "Untitled" is
+            # fine. The sheet only has to be confirmed.
+            #
+            # Confirming is by position, because the toolbar's Erase (y=332) and the
+            # sheet's (y=639) share a label and only the sheet's commits.
+            log("confirming the erase sheet at %s" % (ERASE_CONFIRM,))
+            screen.click(ERASE_CONFIRM[0], ERASE_CONFIRM[1])
+            time.sleep(35)
+            erased = True
+            continue
 
+        # Erased, and Disk Utility is still on screen. It has no close button in
+        # recovery, so Cmd-Q is the way back to the installer list. This sits outside the
+        # "not erased" branch because that branch is finished once the sheet is
+        # confirmed - leaving it under there made the quit unreachable, which would hang
+        # the run inside Disk Utility after a successful erase.
+        if erased:
             log("leaving Disk Utility")
             qmpmod.key_combo(screen.q, "meta_l", "q")
-            time.sleep(12)
+            time.sleep(14)
             continue
 
         # --- recovery menu ------------------------------------------------------
