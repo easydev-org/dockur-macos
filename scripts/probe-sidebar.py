@@ -126,6 +126,29 @@ def main():
             detail = " ".join(w[0] for w in after if w[1] > 700)
             log("detail pane now: %s" % detail[:220])
 
+    # SECOND EXPERIMENT: which y on the Erase control actually opens the sheet?
+    #
+    # The word "Erase" occupies y=332-340 - an 8px label under the icon. Clicking its
+    # centre produced no sheet on three runs, so the tab is probably hit-tested on the
+    # icon above the label. Sweep the toolbar column at 1290 from y=300 to y=345 and
+    # record which one opens something.
+    for y_try in (300, 306, 312, 318, 324, 330, 336):
+        log("trying Erase at (1290,%d)" % y_try)
+        screen.click(1290, y_try)
+        time.sleep(3)
+        grab = screen.grab("%s-erase-y%03d" % (prefix, y_try))
+        w2 = screen.text(grab)
+        t2 = " ".join(w[0] for w in w2).lower()
+        opened = ("format" in t2 or "scheme" in t2 or "cancel" in t2
+                  or "name" in t2)
+        log("  at y=%d sheet open: %s | %s" % (y_try, opened, t2[:120]))
+        if opened:
+            log("  >>> y=%d opens the erase sheet" % y_try)
+            break
+        # A stray click elsewhere may have changed the selection; restore it.
+        screen.click(540, 379)
+        time.sleep(2)
+
     log("done")
     screen.close()
     return 0

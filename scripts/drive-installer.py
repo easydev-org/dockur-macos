@@ -108,7 +108,7 @@ ROW_TOLERANCE = 40
 #   Apple Inc. VirtIO Block Media   y=402
 #   disk2s1                         y=418
 SHOW_ALL_DEVICES = (345, 63)
-ERASE_BUTTON = (1290, 336)
+ERASE_BUTTON = (1290, 318)
 SIDEBAR_X = 380
 
 # Sidebar row heights and the x to click inside them, from measured frames. The rows sit
@@ -339,10 +339,14 @@ def main():
                 # y=332 on the frames captured so far, and its Erase sits between
                 # Partition and Restore. Read it from this frame when possible, fall back
                 # to the measured position when not.
+                # The word "Erase" is the button's LABEL, and its box is only 8px tall
+                # (y=332-340). The control itself is the icon above that label, which is
+                # why clicking the label's centre produces nothing. The tabs are drawn
+                # icon-over-text with the icons around y=318.
                 erase_btn = None
-                for word, x, y, w, _h in words:
+                for word, x, y, _w, _h in words:
                     if word.strip().lower().startswith("era") and 300 < y < 380:
-                        erase_btn = (x, y)
+                        erase_btn = (x, 318)
                         break
                 if erase_btn is None:
                     erase_btn = ERASE_BUTTON
