@@ -379,17 +379,17 @@ def main():
                     # clicking (540,379) the pane reads
                     #   Apple Inc. VirtIO Block Media  Uninitialized  Capacity: Unknown
                     #   Child count: Not Supported  Device: disk0
-                    # Require BOTH the unformatted markers AND an enabled Erase in the
-                    # same frame. The 17:52 run satisfied the first half while the sidebar
-                    # still held only the recovery volume, so the click landed on that
-                    # volume, Erase stayed greyed out, and the loop could not tell the
-                    # difference. Erase present in the toolbar is what proves a writable
-                    # disk is actually selected.
+                    # The unformatted markers are the test. Do NOT also require the word
+                    # "erase" in the frame: a captured frame of a perfectly selected
+                    # target - 68.72 GB, Uninitialized, Erase visibly enabled - returned no
+                    # toolbar text at all, only a fragment "h" at x=1288. Tesseract loses
+                    # that whole row on some frames, so requiring it turned an OCR hiccup
+                    # into a false "selection failed" and the driver kept re-selecting a
+                    # disk that was already right.
                     unformatted = ("uninitialized" in low or "capacity: unknown" in low
                                    or "child count: not supported" in low)
-                    erase_enabled = "erase" in low
-                    log("  unformatted=%s erase_in_toolbar=%s" % (unformatted, erase_enabled))
-                    if unformatted and erase_enabled:
+                    log("  unformatted=%s" % unformatted)
+                    if unformatted:
                         target_row = (x_centre, y_centre)
                         log("the unformatted target disk is the row at (%d,%d)"
                             % target_row)
