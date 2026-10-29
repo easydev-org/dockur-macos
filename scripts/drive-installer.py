@@ -269,42 +269,66 @@ def main():
                             break
                     if view_btn is None:
                         # Fallback: the toolbar's own geometry. Volume is at x=1101, so
-                        # View - the first control - is around x=707, y=334. The menu
+                        # View - the first control - is around x=710, y=336 (probe measured (714,334)). The menu
                         # opening is verified below, so a fallback that misses costs one
                         # pass rather than being taken as success.
-                        view_btn = (707, 339)
+                        view_btn = (710, 336)
                         log("View not matched; using the measured fallback %s" % (view_btn,))
-                    # Try Show All Devices ONCE, and do not require it to work.
+                    # Show All Devices, attempted by MOUSE then by KEYBOARD.
                     #
-                    # Its purpose is narrower than it looked: physical disks appear in the
-                    # sidebar even under "Show Only Volumes" - the probe frame shows two
-                    # VirtIO entries beside disk1s1 in that mode. The switch only makes an
-                    # UNFORMATTED disk show as its own row, and whether it is on decides
-                    # which row yields the target, not whether a target exists.
+                    # This is not optional and not best-effort after all. Under "Show
+                    # Only Volumes" the sidebar holds one row - the k1s1 recovery volume
+                    # - so clicking row 379 selects that volume, the pane reports it, and
+                    # Erase is greyed out. That is exactly the sequence the 17:52 run
+                    # repeated: "the unformatted target disk is the row at (540,379)" then
+                    # "Erase not matched in OCR" then "sheet open: False", because Erase
+                    # was disabled and no sheet could appear.
                     #
-                    # Making it a precondition deadlocked a whole run: the menu failed to
-                    # open for twenty minutes and every pass retried instead of looking at
-                    # the sidebar, which already listed the disks.
+                    # More robust: bring the menu up with its keyboard equivalent. Control-F2
+                    # moves focus to the menu bar and typing the item's letters then Return
+                    # activates it, which does not depend on hitting a 40px button with an
+                    # OCR-derived point.
                     log("opening the View menu at %s" % (view_btn,))
                     screen.click(view_btn[0], view_btn[1])
                     time.sleep(3)
                     menu = joined(words_of(screen, prefix, "viewmenu"))
                     log("View menu shows: %s" % menu[:140])
+
                     if "all" in menu:
                         item = None
                         for word, x, y, _w, _h in words_of(screen, prefix, "viewmenu2"):
                             if word.strip().lower() == "all":
                                 item = (x, y)
                                 break
-                        log("choosing Show All Devices at %s" % (item or SHOW_ALL_DEVICES,))
                         p = item or SHOW_ALL_DEVICES
+                        log("choosing Show All Devices at %s" % (p,))
                         screen.click(p[0], p[1])
                         time.sleep(5)
                     else:
-                        # Close whatever did open, then rely on row probing.
+                        log("mouse did not open the menu; trying the keyboard")
                         screen.key("esc")
-                        time.sleep(2)
-                        log("View menu unavailable; relying on row probing")
+                        time.sleep(1)
+                        # Ctrl-F2 focuses the menu bar, then "v" reaches View, and the
+                        # second item is Show All Devices.
+                        qmpmod.key_combo(screen.q, "ctrl_l", "f2")
+                        time.sleep(1)
+                        screen.type("v", delay=0.1)
+                        time.sleep(1)
+                        menu = joined(words_of(screen, prefix, "viewmenu-kb"))
+                        log("keyboard menu shows: %s" % menu[:140])
+                        if "all" in menu:
+                            screen.key("down")
+                            time.sleep(0.5)
+                            screen.key("ret")
+                            time.sleep(5)
+                        else:
+                            screen.key("esc")
+
+                    # Whatever route was taken, the switch has to have taken effect: under
+                    # Show All Devices the sidebar lists physical disks, and the target is
+                    # the one that is Uninitialized with no capacity.
+                    after = joined(words_of(screen, prefix, "afterview"))
+                    log("after View: %s" % after[:160])
                     erase_clicked = True
                     continue
                 # capacities identify them:
@@ -355,8 +379,17 @@ def main():
                     # clicking (540,379) the pane reads
                     #   Apple Inc. VirtIO Block Media  Uninitialized  Capacity: Unknown
                     #   Child count: Not Supported  Device: disk0
-                    if ("uninitialized" in low or "capacity: unknown" in low
-                            or "child count: not supported" in low):
+                    # Require BOTH the unformatted markers AND an enabled Erase in the
+                    # same frame. The 17:52 run satisfied the first half while the sidebar
+                    # still held only the recovery volume, so the click landed on that
+                    # volume, Erase stayed greyed out, and the loop could not tell the
+                    # difference. Erase present in the toolbar is what proves a writable
+                    # disk is actually selected.
+                    unformatted = ("uninitialized" in low or "capacity: unknown" in low
+                                   or "child count: not supported" in low)
+                    erase_enabled = "erase" in low
+                    log("  unformatted=%s erase_in_toolbar=%s" % (unformatted, erase_enabled))
+                    if unformatted and erase_enabled:
                         target_row = (x_centre, y_centre)
                         log("the unformatted target disk is the row at (%d,%d)"
                             % target_row)
