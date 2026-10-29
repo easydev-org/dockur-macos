@@ -74,6 +74,11 @@ SIDEBAR_OTHERS = ((540, 402), (540, 430))
 SHEET_ERASE = (1146, 639)
 SHEET_CANCEL = (1066, 639)
 
+# The license pane, measured: the default focus sits on Disagree, so Return advances
+# nothing and the run stalls there indefinitely.
+LICENSE_AGREE = (1005, 676)
+LICENSE_DISAGREE = (899, 676)
+
 
 def main():
     if len(sys.argv) < 3:
@@ -158,17 +163,32 @@ def main():
     time.sleep(30)
     screen.grab("%s-06-install" % prefix)
 
-    # 5. Follow the installer to Setup Assistant. The panes vary, so this part presses
-    #    Return, which is the default button on all of them, and screenshots as it goes.
-    for step in range(1, 60):
+    # 5. Follow the installer to Setup Assistant.
+    #
+    # Return is not enough. The license pane puts DISAGREE under the default focus, so
+    # pressing Return thirty-two times navigated nothing - the run sat on that pane for
+    # eleven minutes. Measured from the frame: Disagree (899,676), Agree (1005,676).
+    #
+    # The loop is coordinate-driven like everything else: click Agree whenever the pane is
+    # the license, and press Return otherwise. Screenshots are taken throughout so a stuck
+    # step can be read afterwards instead of guessed at.
+    for step in range(1, 80):
         grab = screen.grab("%s-07-step%02d" % (prefix, step))
         words = screen.text(grab)
         text = " ".join(w[0] for w in words).lower()
         log("install step %d: %s" % (step, text[:140] or "(nothing)"))
+
         if "country or region" in text or "select your country" in text:
             log("SETUP ASSISTANT REACHED at step %d" % step)
             screen.close()
             return 0
+
+        if "license agreement" in text or "agree" in text:
+            log("license pane: clicking Agree at %s" % (LICENSE_AGREE,))
+            screen.click(*LICENSE_AGREE)
+            time.sleep(10)
+            continue
+
         screen.key("ret")
         time.sleep(20)
 
