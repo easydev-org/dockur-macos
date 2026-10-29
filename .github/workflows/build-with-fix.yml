@@ -247,6 +247,33 @@ jobs:
           mkdir -p frames
           chmod 777 frames
 
+          # EXTRACT rc.cdrom.sh FROM THE RECOVERY IMAGE THE CONTAINER JUST DOWNLOADED.
+          #
+          # The unattended path works by binary-patching that one file, and the needle it
+          # searches for is macOS 14's text - which is why MANUAL=N fails on 15 with
+          # "Expected exactly one rc.cdrom.sh bootstrap, found 0". Everything else about
+          # that path is version-independent.
+          #
+          # Rather than download the image a second time on this runner, take the one
+          # sitting in storage/$V/setup.dmg and print the script. 7-Zip reads the UDIF
+          # container, and the file is found by content because its path inside the image
+          # is not something to guess.
+          sudo apt-get install -y -qq p7zip-full || true
+          7z x -y -o/tmp/rec "storage/$V/setup.dmg" >/tmp/7z.log 2>&1 || true
+          tail -5 /tmp/7z.log || true
+          find /tmp/rec -maxdepth 3 -type d 2>/dev/null | head -20 || true
+          echo "=== searching for rc.cdrom.sh by content ==="
+          found=0
+          for f in $(find /tmp/rec -type f -size -200k 2>/dev/null); do
+            if grep -qa "diskarbitrationd" "$f" 2>/dev/null; then
+              found=1
+              echo "--- $f ---"
+              head -40 "$f" | cat -v
+            fi
+          done
+          [ "$found" = "1" ] || echo "no rc.cdrom.sh located in the extracted tree"
+          cp -a /tmp/rec "frames/rec-${V}" 2>/dev/null || true
+
           # Wait for the ASSETS, not for a socket. The container writes setup.dmg,
           # data.img, boot.img, macos.rom and macos.vars into /storage/$V; once all
           # five are there it has done everything this step needs from it. The
