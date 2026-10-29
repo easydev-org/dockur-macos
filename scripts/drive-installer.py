@@ -366,9 +366,19 @@ def main():
                 # did nothing is retried instead of being treated as done - that is what
                 # happened before: erase_clicked was set, the toolbar Erase was pressed on
                 # each pass, and the loop could not tell a failed open from a slow one.
+                # The sheet's TITLE is the reliable signal: it reads
+                #
+                #   Erase "Apple Inc. VirtIO Block Media"?
+                #
+                # and OCR catches that as  erase "apple inc. virtlo blo...  The first
+                # version looked for format/scheme/cancel/name instead, none of which
+                # appear in the title, so a sheet that had opened perfectly was reported
+                # as "sheet open: False" - and the press was repeated, closing it again.
+                # A quoted word straight after "erase" is the giveaway.
                 sheet_open = ("format" in after_text or "scheme" in after_text
-                              or "name" in after_text or "cancel" in after_text
-                              or "erase" in after_text.replace("disk utility", ""))
+                              or "cancel" in after_text
+                              or "partition map" in after_text
+                              or 'erase "' in after_text)
                 log("erase sheet open: %s" % sheet_open)
                 if not sheet_open:
                     # Do NOT go back to the View menu. The target is already selected -
