@@ -1,26 +1,27 @@
 name: diagnose-recovery-script
 
-# Print the real rc.cdrom.sh from a macOS recovery image.
+# Print the real rc.cdrom.sh from a recovery image, so the patch needle can be fixed
+# instead of worked around.
 #
-# The unattended installer works by binary-patching that file inside the recovery DMG:
-# it replaces the script's opening comment block with a one-line bootstrap that mounts
-# the installstate share and execs launch.sh. The needle it looks for is
+# The unattended path is entirely version-independent except for ONE STRING. patch.py
+# replaces the opening comment block of /etc/rc.cdrom.sh inside the recovery DMG with a
+# bootstrap that mounts the installstate share and execs launch.sh. The needle it looks
+# for is macOS 14's text:
 #
 #   # launchd passes the "boot mode" to us, if one is set for this boot
-#   # in certain boot modes, we tell diskarbitrationd not to automatically
-#   ...
 #
-# which is macOS 14's text. On 15 and 26 that block has changed, so the patch finds zero
-# matches and refuses:
+# On 15 and 26 that block has changed, so find_all returns nothing and the patch refuses:
 #
 #   Recovery bootstrap patch failed: Expected exactly one rc.cdrom.sh bootstrap, found 0
 #
-# Everything else about the unattended path - the 9p share, launch.sh, select_target_disk,
-# diskutil eraseDisk, startosinstall - is version-independent. Only this needle is not.
+# Everything downstream - the 9p share, launch.sh, select_target_disk, diskutil
+# eraseDisk, startosinstall - is identical on all three. Correct the needle and 15/26 run
+# through exactly the code path 14 runs through, with no GUI at all. That is the point of
+# this job.
 #
-# So this job extracts the file and prints it. Then SCRIPT_ORIGINAL can be replaced with
-# what 15 actually says, and 15/26 run through exactly the same code path as 14 instead
-# of needing a GUI driver at all.
+# The image is obtained by letting the container fetch it, because src/install.sh needs
+# the container's environment ('strip: : No such file' when run directly on the runner).
+# The container only has to download; it never needs to boot.
 
 on:
   workflow_dispatch:
@@ -29,9 +30,14 @@ on:
         description: "macOS version whose recovery image to inspect"
         required: false
         default: "15"
+      launcher_image:
+        description: "Image carrying the dockur scripts"
+        required: false
+        default: "ghcr.io/easydev-org/dockur-macos-launcher:14"
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   extract:
@@ -46,64 +52,73 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq qemu-utils p7zip-full
 
-      # Board identifiers select which Apple recovery catalogue answers, and each macOS
-      # generation only asks for its own. Same table as src/install.sh.
-      - name: download the recovery image
+      - name: pull the launcher image
         run: |
           set -eux
-          case "${{ github.event.inputs.macos_version }}" in
-            15*) BOARD="Mac-937A206F2EE63C01" ;;
-            26*|16*) BOARD="Mac-CFF7D910A743CAAF" ;;
-            *) BOARD="Mac-827FAC58A8FDFA22" ;;
-          esac
-          echo "board=$BOARD"
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | sudo docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo docker pull "${{ github.event.inputs.launcher_image }}"
+          sudo docker tag "${{ github.event.inputs.launcher_image }}" macos-diag
 
-          # Use src/install.sh's own downloader instead of re-implementing it.
-          #
-          # Apple's service wants a session cookie from a first throwaway request, then a
-          # POST whose body is newline-separated cid/sn/bid/k/fg/os carrying freshly
-          # generated nonces, and replies with space-delimited key/value text. Writing
-          # that a second time here would just be another thing to get wrong - the
-          # installer's copy already works, and stage 1 has been using it every run.
-          mkdir -p /tmp/state
+      - name: let the container download the recovery image
+        run: |
+          set -eux
           V="${{ github.event.inputs.macos_version }}"
-          BOARD_ID="$BOARD" VERSION="$V" STORAGE=/tmp/state \
-          DISK_SIZE=64G RAM_SIZE=8G CPU_CORES=4 MANUAL=Y \
-          timeout 1800 bash ./src/install.sh >/tmp/install.log 2>&1 || true
-          tail -50 /tmp/install.log || true
-          find /tmp/state -name '*.dmg' -exec ls -la {} + || true
-          dmg=$(find /tmp/state -name '*.dmg' | head -1)
-          [ -n "$dmg" ] || { echo "::error::installer produced no dmg"; exit 1; }
-          cp "$dmg" /tmp/recovery.dmg
-          ls -la /tmp/recovery.dmg
+          mkdir -p "$GITHUB_WORKSPACE/storage"
 
-      # 7-Zip understands the UDIF container well enough to list and extract members,
-      # which is what makes this possible on a Linux runner with no macOS tooling.
-      - name: extract rc.cdrom.sh
+          sudo docker run -d --name dlg \
+            --device=/dev/kvm \
+            -e VERSION="$V" -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            macos-diag
+
+          # setup.dmg appears once the download finishes, which is several minutes; the
+          # other assets arrive alongside it. Only the dmg is needed here.
+          for i in $(seq 1 180); do
+            if [ -s "storage/$V/setup.dmg" ]; then
+              echo "setup.dmg present after $((i*5))s"
+              break
+            fi
+            echo "[$((i*5))s] waiting"
+            sleep 5
+          done
+          ls -la "storage/$V/" || true
+          sudo docker rm -f dlg >/dev/null 2>&1 || true
+
+      # qemu-img understands UDIF well enough to convert it to raw, and a raw image can be
+      # searched directly - no mounting, no special tooling. That is simpler than trying to
+      # unpack the DMG's HFS payload.
+      - name: find the script by content
         run: |
           set -eux
-          7z l /tmp/recovery.dmg | head -40 || true
-          7z x -y -o/tmp/rec /tmp/recovery.dmg || true
-          echo "=== what came out ==="
-          find /tmp/rec -maxdepth 3 | head -40 || true
+          V="${{ github.event.inputs.macos_version }}"
+          SRC="storage/$V/setup.dmg"
+          [ -s "$SRC" ] || { echo "::error::no setup.dmg"; exit 1; }
 
-          # The file lives at /etc/rc.cdrom.sh inside the HFS/APFS payload. Locate it by
-          # content rather than by guessing a path: every macOS recovery carries the
-          # word "diskarbitrationd" in that script.
-          echo "=== searching for the script ==="
-          find /tmp/rec -type f -size -200k 2>/dev/null | while read -r f; do
-            if grep -qa "diskarbitrationd" "$f" 2>/dev/null; then
-              echo "--- candidate: $f ---"
-              head -60 "$f" | cat -v | head -60
-            fi
+          qemu-img convert -O raw "$SRC" /tmp/rec.raw || \
+            qemu-img convert -O raw -f dmg "$SRC" /tmp/rec.raw
+          ls -la /tmp/rec.raw
+
+          # The script always contains the word diskarbitrationd and the shebang of a
+          # shell script shortly before it. Print a window around every hit.
+          echo "=== offsets mentioning diskarbitrationd ==="
+          grep -abo "diskarbitrationd" /tmp/rec.raw | head -20 || true
+
+          for off in $(grep -abo "diskarbitrationd" /tmp/rec.raw | cut -d: -f1 | head -5); do
+            start=$(( off > 4000 ? off - 4000 : 0 ))
+            echo "=== context around byte $off ==="
+            dd if=/tmp/rec.raw bs=1 skip=$start count=6000 status=none | cat -v
+            echo
           done
 
-      - name: keep what was found
+      - name: keep the extraction
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: recovery-inspect
+          name: recovery-context
           path: |
-            /tmp/rec/**
+            /tmp/rec.raw
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 3
+          compression-level: 0
