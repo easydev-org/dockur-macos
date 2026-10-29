@@ -1,0 +1,199 @@
+name: stage1-install
+
+# STAGE 1 OF THREE for macOS versions the unattended installer cannot reach.
+#
+# The unattended path binary-patches rc.cdrom.sh inside the recovery image, and that
+# patch matches macOS 14 only:
+#
+#     Recovery bootstrap patch failed: Expected exactly one rc.cdrom.sh bootstrap, found 0
+#
+# upstream dockur/macos ships the same patch.py with the same SCRIPT_ORIGINAL, so no
+# version input fixes this - the automated branch has never been exercised on 15 or 26.
+#
+# So the installer is driven by looking at the screen, exactly as Setup Assistant
+# already is. This workflow takes the guest from the recovery boot to the point where
+# Setup Assistant appears, then publishes that disk as <version>-setup.
+#
+# Stage 2 (deploy-macos-desktop.yml) consumes it and drives Setup Assistant to the
+# desktop. Stage 3 enables ssh. Splitting them means a failure in one costs minutes
+# rather than the whole install.
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_version:
+        description: "macOS version to install (14, 15, 26)"
+        required: true
+        default: "15"
+      publish_tag:
+        description: "Tag for the resulting disk (default: <version>-setup)"
+        required: false
+        default: ""
+      launcher_image:
+        description: "Image carrying qemu and the OpenCore assets"
+        required: false
+        default: "ghcr.io/easydev-org/dockur-macos-launcher:14"
+      install_timeout_min:
+        description: "Minutes to allow the installer to reach Setup Assistant"
+        required: false
+        default: "90"
+
+permissions:
+  contents: read
+  actions: read
+  packages: write
+
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils tesseract-ocr
+          tesseract --version | head -1
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      # The launcher image carries qemu, the OpenCore assets and the dockur scripts
+      # this needs; building it here would add twenty minutes to every attempt.
+      - name: pull the launcher image
+        run: |
+          set -eux
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | sudo docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo docker pull "${{ github.event.inputs.launcher_image || 'ghcr.io/easydev-org/dockur-macos-launcher:14' }}"
+          sudo docker tag \
+            "${{ github.event.inputs.launcher_image || 'ghcr.io/easydev-org/dockur-macos-launcher:14' }}" \
+            macos-installer
+          sudo docker images | head -5
+
+      # MANUAL=Y is the whole point: it leaves the recovery image unpatched, so the
+      # guest boots the real macOS installer and waits for a person - or for this
+      # driver - to click through it. MANUAL=N is what fails on 15 and 26.
+      - name: start the installer with MANUAL=Y
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/storage" "$GITHUB_WORKSPACE/frames"
+          chmod 777 "$GITHUB_WORKSPACE/frames"
+          sudo docker run -d --name macinst \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=${{ github.event.inputs.macos_version }} \
+            -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            macos-installer
+          sleep 30
+          sudo docker logs --tail 40 macinst || true
+
+      - name: drive the installer to Setup Assistant
+        timeout-minutes: ${{ fromJSON(github.event.inputs.install_timeout_min) }}
+        run: |
+          set -eux
+          # The QMP socket appears inside the container; the bind mount makes it
+          # visible here. The driver talks to it over that socket, which is how the
+          # screendumps and clicks reach qemu without any network between them.
+          for i in $(seq 1 60); do
+            [ -S frames/monitor.sock.qmp ] && break
+            sleep 5
+          done
+          ls -la frames || true
+          sudo python3 scripts/drive-installer.py \
+            "$GITHUB_WORKSPACE/frames/monitor.sock" \
+            "$GITHUB_WORKSPACE/frames/stage1" || true
+          sudo chown -R "$(id -u):$(id -g)" frames || true
+          echo "=== installer log ==="
+          cat frames/stage1-installer.log 2>/dev/null | tail -60 || true
+
+      - name: stop the guest
+        if: always()
+        run: |
+          sudo docker stop -t 60 macinst >/dev/null 2>&1 || true
+          sudo docker rm -f macinst >/dev/null 2>&1 || true
+          sync
+          du -sm storage | tail -1
+
+      - name: upload the installer frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage1-frames
+          path: |
+            frames/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: convert the installed disk
+        if: always()
+        run: |
+          set -eux
+          SRC=$(find "$GITHUB_WORKSPACE/storage" -name data.img -printf '%s %p\n' \
+                | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -z "$SRC" ]; then
+            echo "::error::no data.img - the installer never wrote a disk"
+            exit 1
+          fi
+          echo "source: $SRC"
+          sudo chown "$(id -u):$(id -g)" "$SRC"
+          qemu-img convert -O qcow2 -c "$SRC" "$GITHUB_WORKSPACE/macos-setup.qcow2"
+          qemu-img info "$GITHUB_WORKSPACE/macos-setup.qcow2"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-setup-disk
+          path: macos-setup.qcow2
+          if-no-files-found: warn
+          retention-days: 7
+          compression-level: 0
+
+      - name: publish the setup disk to ghcr
+        if: always()
+        run: |
+          set -eux
+          TAG="${{ github.event.inputs.publish_tag }}"
+          TAG="${TAG:-${{ github.event.inputs.macos_version }}-setup}"
+
+          # Only publish a disk the driver actually got to Setup Assistant with.
+          # A disk that stopped in Disk Utility is not a starting point for stage 2,
+          # and putting it in the registry under a name that says it is would be a
+          # lie the next stage quietly depends on.
+          if ! grep -q "SETUP ASSISTANT REACHED" frames/stage1-installer.log 2>/dev/null; then
+            echo "::warning::the installer never reached Setup Assistant; not publishing"
+            exit 0
+          fi
+          [ -s macos-setup.qcow2 ] || { echo "::warning::no disk to publish"; exit 0; }
+
+          curl -sSL https://github.com/oras-project/oras/releases/download/v1.2.0/oras_1.2.0_linux_amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin oras
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | oras login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+          REF="ghcr.io/easydev-org/golden-macos:$TAG"
+          {
+            echo "source_run: ${{ github.run_id }}"
+            echo "git_sha: ${{ github.sha }}"
+            echo "built_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "macos_version: ${{ github.event.inputs.macos_version }}"
+            echo "stage: installed, at Setup Assistant"
+            echo "installer_driven_by: ocr (MANUAL=Y), because the rc.cdrom patch matches 14 only"
+            echo "--- qemu-img info ---"
+            qemu-img info macos-setup.qcow2
+          } > setup-disk.txt
+          cat setup-disk.txt
+
+          oras push "$REF" \
+            --artifact-type application/vnd.easydev.golden-disk.v1+qcow2 \
+            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            macos-setup.qcow2:application/vnd.easydev.qcow2 \
+            setup-disk.txt:text/plain
+          echo "=== published $REF ==="
