@@ -43,8 +43,11 @@ if [ -s "$VMDIR/setup.dmg" ]; then
 fi
 
 if [ -n "$SETUP_DMG" ]; then
-  SETUP_ARG="-drive file=$SETUP_DMG,id=SetupDisk,if=none,readonly=on
-  -device virtio-blk-pci,drive=SetupDisk,bus=pcie.0,addr=0x6,bootindex=8"
+  # format=dmg is not optional: without it qemu probes the file, decides it cannot
+  # identify a raw image of that size, and refuses to open it. dockur passes exactly
+  # this combination (file=...,format=dmg,cache=unsafe,readonly=on) so it is copied
+  # rather than invented.
+  SETUP_ARG="-drive file=$SETUP_DMG,id=SetupDisk,format=dmg,cache=unsafe,readonly=on,if=none -device virtio-blk-pci,drive=SetupDisk,bus=pcie.0,addr=0x6,bootindex=8"
 else
   SETUP_ARG=""
 fi
