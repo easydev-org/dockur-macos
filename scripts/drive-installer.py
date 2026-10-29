@@ -280,8 +280,14 @@ def main():
                 # earlier version, looking for "64", never found it and kept reporting
                 # "no row reported a large capacity". The absence of both a size and a
                 # child is what separates the unformatted disk from the two images.
+                # Only the sidebar, x<700. The right-hand pane repeats
+                # "VirtIO Block Media" as the selected device's title, and treating that
+                # as a row made the driver click x=927 - the detail pane - which selects
+                # nothing and explains the alternating "row at (540,379)" /
+                # "row at (927,389)" in the log.
                 rows = [(w[2], w[1], w[0]) for w in words
-                        if "virtio" in w[0].lower() or "virtl" in w[0].lower()]
+                        if ("virtio" in w[0].lower() or "virtl" in w[0].lower())
+                        and w[1] < 700]
                 log("sidebar candidates: %s" % (rows,))
 
                 target_row = None
@@ -303,9 +309,28 @@ def main():
                     time.sleep(5)
                     continue
 
-                log("clicking Erase at %s" % (ERASE_BUTTON,))
-                screen.click(ERASE_BUTTON[0], ERASE_BUTTON[1])
-                time.sleep(10)
+                # Erase is a toolbar button, not a fixed point: the toolbar sits at
+                # y=332 on the frames captured so far, and its Erase sits between
+                # Partition and Restore. Read it from this frame when possible, fall back
+                # to the measured position when not.
+                erase_btn = None
+                for word, x, y, w, _h in words:
+                    if word.strip().lower().startswith("era") and 300 < y < 380:
+                        erase_btn = (x + w // 2, y)
+                        break
+                if erase_btn is None:
+                    erase_btn = ERASE_BUTTON
+                    log("Erase not matched in OCR; using measured %s" % (erase_btn,))
+                log("clicking Erase at %s" % (erase_btn,))
+                screen.click(erase_btn[0], erase_btn[1])
+                # Capture immediately afterwards. If the click opened a sheet this shows
+                # it; if it did nothing, that is equally visible, and either way the next
+                # round does not have to guess which happened.
+                time.sleep(4)
+                screen.grab("%s-after-erase-%02d" % (prefix, step))
+                after = words_of(screen, prefix, "after-erase-ocr-%02d" % step)
+                log("after Erase: %s" % joined(after)[:220])
+                time.sleep(6)
                 continue
 
             # The erase sheet. Its own Erase commits; it is the lowest such control.
