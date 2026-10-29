@@ -50,30 +50,6 @@ W, H = 1920, 1080
 # that list is opened by selecting it and pressing this, not by clicking the entry.
 CONTINUE_BUTTON = (1142, 588)
 
-# The erase script travels as a FILE on a small FAT disk attached to the VM.
-#
-# WHY NOT DISK UTILITY. It was the obvious instrument and it cost many rounds. Its
-# sidebar lists VOLUMES, and a freshly created 64 GB disk has none, so the target never
-# appeared there at all - the three rows on screen were the recovery volume and the boot
-# image. Even those rows could not be read: tesseract returned none of "Apple Inc.
-# VirtIO Block Media" at any psm setting, because that text is small, low-contrast and
-# on a dark background.
-#
-# WHY NOT TYPE THE SCRIPT INSTEAD. This input channel cannot carry a pipe, drops double
-# quotes, truncates long lines, and mangles capitals unless every one goes out as a
-# shift chord. A shell script full of loops, sed and quoting is not something it can
-# deliver intact - measured repeatedly on this project.
-#
-# So recovery's own disk arbitration mounts the FAT disk at /Volumes/ERASE, and the only
-# thing typed is a path with no metacharacters in it at all.
-ERASE_SCRIPT = "/Volumes/ERASE/e.sh"
-
-# The recovery menu bar, measured from a frame: Utilities sits between Edit and Window.
-# Its drop-down puts Terminal third; that position is stable because the menu is short
-# and its contents do not vary in recovery.
-UTILITIES_MENU = (236, 12)
-TERMINAL_ITEM = (255, 92)
-
 # Disk Utility's Erase button, measured from a macOS 15 recovery frame: the toolbar row
 # is at y=264 and Erase sits between Partition and Restore.
 ERASE_BUTTON = (1291, 264)
@@ -198,8 +174,6 @@ def main():
     erase_clicked = False
     target_disk = None
     disk_probe = 0
-    menu_open = False
-    install_started = False
     for step in range(1, 140):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
@@ -211,66 +185,156 @@ def main():
             screen.close()
             return 0
 
-        # The erase happens in Terminal, not in Disk Utility. See ERASE_SCRIPT above for
-        # why that instrument was abandoned after many rounds of it not working.
+        # Is Disk Utility running? Do not test "first aid": OCR reads it as
+        # "first ald" in every frame of this pane, so that test never fired and the
+        # driver stayed on the recovery menu for a hundred steps. The window title and
+        # its Erase control both read reliably instead.
+        # Detect Disk Utility by its TOOLBAR, not by words that also appear on the
+        # recovery menu. That menu lists an entry reading
         #
-        # The menu bar has Utilities, and Terminal is under it. Both are small targets,
-        # so this walks the menu: click Utilities, then Terminal beneath it.
-        if not erased:
-            if "erase-done" in joined or "erase-ok" in joined:
-                log("erase reported done")
-                erased = True
-                continue
+        #   Disk Utility - Repair or erase a disk using Disk Utility
+        #
+        # so "disk utility" AND "erase" are both present before the tool is opened -
+        # the test was true on the menu itself, the driver entered its disk branch, and
+        # looked for a VirtIO row that only exists inside the tool. Twenty-odd steps of
+        # "no VirtIO row in the sidebar yet" with the menu on screen.
+        #
+        # The toolbar has Volume, Partition, First Aid, Restore and Unmount. None of
+        # those words appear anywhere on the recovery menu, and three of them together
+        # cannot be a coincidence.
+        toolbar = sum(1 for w in joined.split() if w in
+                      ("volume", "partition", "restore", "unmount", "first", "ald"))
+        in_disk_utility = toolbar >= 3 or "physical volume" in joined
 
-            if "terminal" in joined and ("-" in joined or "%" in joined or "" in joined):
-                # A Terminal window is up. Paste the path to the mounted script and run
-                # it - twenty-two characters, no pipes or quotes for the channel to lose.
-                log("typing the erase script path")
-                screen.type(ERASE_SCRIPT, delay=0.15)
-                screen.key("ret")
-                time.sleep(20)
-                screen.grab("%s-erase-run" % prefix)
-                after = screen.text(screen.grab("%s-erase-after" % prefix))
-                seen = " ".join(w[0] for w in after).lower()
-                log("terminal says: %s" % seen[:200])
-                if "erase-done" in seen or "erase-ok" in seen:
-                    log("erase confirmed from the Terminal output")
+        if in_disk_utility:
+            if not erased:
+                # WHICH DISK IS THE TARGET, decided by capacity rather than position.
+                #
+                # The sidebar holds three rows - two "Apple Inc. VirtIO Block Media"
+                # and the disk1s1 volume the recovery image is mounted from - and they
+                # are SIBLINGS, not a parent and its child. Nothing on the row says
+                # which of the two disks is the empty 64 GB one, and disk1s1 is
+                # selected by default: erasing that would delete the installer the
+                # guest is running from.
+                #
+                # The one reliable distinction is what the pane shows after selecting a
+                # row - the volume's capacity. So each VirtIO row is clicked in turn and
+                # read: the 64 GB disk is the one whose capacity contains "64".
+                if target_disk is None:
+                    # The sidebar rows cannot be found by OCR. A frame shows
+                    #
+                    #   Internal                        y~318
+                    #   Apple Inc. VirtIO Block Media   y~340
+                    #   Apple Inc. VirtIO Block Media   y~363
+                    #   disk2s1                         y~389  (selected by default)
+                    #
+                    # with the sidebar spanning x 410-666 - but tesseract returns none
+                    # of those words at any psm setting tried, only the right pane's
+                    # "physical volume" text. They are small, low-contrast and on a dark
+                    # background, and it discards them as noise.
+                    #
+                    # So the rows are addressed by POSITION, and the choice between them
+                    # is made the way a person would: click one, look at what the pane
+                    # says its capacity is, and keep the one that reports 64 GB. That
+                    # reading comes from the large text on the right, which OCR does
+                    # return.
+                    ROWS_Y = (340, 363, 389)
+                    SIDEBAR_X = 540
+                    if disk_probe < len(ROWS_Y):
+                        ry = ROWS_Y[disk_probe]
+                        disk_probe = disk_probe + 1
+                        log("probing sidebar row %d at (%d,%d)" % (disk_probe - 1, SIDEBAR_X, ry))
+                        screen.click(SIDEBAR_X, ry)
+                        time.sleep(3)
+                        after = screen.text(screen.grab("%s-probe%d" % (prefix, disk_probe)))
+                        right = " ".join(w[0] for w in after if w[1] > 900)
+                        log("right panel says: %s" % right[:180])
+                        if "64" in right:
+                            target_disk = (SIDEBAR_X, ry)
+                            log("the 64 GB disk is row %d at y=%d" % (disk_probe - 1, ry))
+                        continue
+                    if target_disk is None:
+                        # Nothing reported 64 GB. Take the first VirtIO row rather than
+                        # the selected one: the selected one is the recovery volume.
+                        target_disk = (SIDEBAR_X, ROWS_Y[0])
+                        log("no capacity said 64; defaulting to the first row %s" % (target_disk,))
+                    continue
+
+                # The target is known. Select it, then press the Erase control, whose
+                # position is read from the frame: the toolbar sits at y=264 on one
+                # window and y=288 on another, so a hardcoded point lands on Partition
+                # half the time.
+                if not erase_clicked:
+                    log("selecting the target disk at %s" % (target_disk,))
+                    screen.click(target_disk[0] + 120, target_disk[1])
+                    time.sleep(3)
+                    erase = None
+                    for word, x, y, _w, _h in words:
+                        if word.strip().lower().startswith("era") and y < 400:
+                            erase = (x, y)
+                            break
+                    if erase is None:
+                        log("Erase control not found in this frame")
+                        continue
+                    log("clicking Erase at %s" % (erase,))
+                    screen.click(erase[0], erase[1])
+                    erase_clicked = True
+                    time.sleep(10)
+                    continue
+
+                # The erase sheet. Its own Erase is the one that commits, and it sits
+                # low on the sheet, so the lowest matching candidate is taken.
+                cands = [(w[1], w[2]) for w in words
+                         if w[0].strip().lower().startswith("era") and w[2] > 380]
+                if cands:
+                    target = cands[-1]
+                    log("confirming Erase at %s" % (target,))
+                    screen.click(target[0], target[1])
+                    time.sleep(25)
                     erased = True
+                    continue
+
+                log("waiting for the erase sheet")
+                time.sleep(5)
                 continue
 
-            # Open the Utilities menu in the menu bar. Its position is fixed and it is
-            # present on every recovery screen.
-            if not menu_open:
-                log("opening the Utilities menu at %s" % (UTILITIES_MENU,))
-                screen.click(UTILITIES_MENU[0], UTILITIES_MENU[1])
-                menu_open = True
-                time.sleep(3)
-                continue
-
-            # Choose Terminal from the menu that just dropped.
-            log("choosing Terminal at %s" % (TERMINAL_ITEM,))
-            screen.click(TERMINAL_ITEM[0], TERMINAL_ITEM[1])
-            time.sleep(10)
-            menu_open = False
+            # Erased. Leave Disk Utility - recovery has no close button, and the
+            # installer list only returns when it is quit.
+            log("leaving Disk Utility to return to the installer list")
+            qmpmod.key_combo(screen.q, "meta_l", "q")
+            time.sleep(12)
             continue
 
-        # Erased. Back to the installer list, then Reinstall macOS.
+        # Outside Disk Utility: the recovery tool list.
+# Outside Disk Utility: the recovery tool list.
+# Outside Disk Utility: the recovery tool list. Selecting an entry only
+        # highlights it - the frame after seventy-nine clicks still showed the menu
+        # with Disk Utility greyed - so Continue at (1142,588) is what opens it.
+        target = entry("disk utility") if not erased else None
+        if target is not None:
+            log("selecting Disk Utility at %s" % (target,))
+            screen.click(target[0], target[1])
+            time.sleep(2)
+            log("pressing Continue at %s to open it" % (CONTINUE_BUTTON,))
+            screen.click(CONTINUE_BUTTON[0], CONTINUE_BUTTON[1])
+            time.sleep(15)
+            continue
+
         target = entry("reinstall")
-        if target is not None and not install_started:
+        if target is not None:
             log("selecting Reinstall at %s" % (target,))
             screen.click(target[0], target[1])
             time.sleep(2)
             log("pressing Continue at %s to start it" % (CONTINUE_BUTTON,))
             screen.click(CONTINUE_BUTTON[0], CONTINUE_BUTTON[1])
-            install_started = True
             time.sleep(20)
             continue
 
         if "continue" in joined or "agree" in joined:
-            t2 = find(words, "continue", "agree")
-            if t2 is not None:
-                log("advancing at %s" % (t2,))
-                screen.click(t2[0], t2[1])
+            target = find(words, "continue", "agree")
+            if target is not None:
+                log("advancing at %s" % (target,))
+                screen.click(target[0], target[1])
                 time.sleep(12)
                 continue
 
