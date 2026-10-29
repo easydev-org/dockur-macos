@@ -40,6 +40,7 @@ test for the words "disk utility" or "erase" was true before the tool had even o
 """
 
 import os
+import re
 import sys
 import time
 
@@ -65,6 +66,38 @@ CONTINUE_MENU = (1142, 588)
 # Row centres of the four recovery entries, averaged across 14, 15 and 26 frames.
 ROW_Y = (244, 330, 425, 520)
 ROW_X = 958
+
+# Disk Utility's View menu, measured from a frame captured with the menu open. The item
+# that matters is Show All Devices, and its position matters more than it looks: it was
+# previously guessed at (210,190), which lands outside the menu and simply closes it - so
+# the switch was never flipped, the 64 GiB disk never entered the sidebar, and every erase
+# attempt had nothing to erase.
+#
+# Measured with tesseract on the captured frame, not by eye - the word boxes come back
+# with their own coordinates, so these are the centres of the text rather than a guess:
+#
+#   Show Only Volumes    y=36  x=294-413   centre (354,  41)
+#   Show All Devices     y=58  x=294-397   centre (345,  63)   <- the target
+#   Show APFS Snapshots  y=91  x=295-430   centre (362,  96)
+#   Hide Sidebar         y=124             centre (333, 129)
+#   Hide Toolbar         y=157             centre (333, 162)
+#   Enter Full Screen    y=201             centre (345, 206)
+#
+# The toolbar row, same frame, all at y=332:
+#
+#   Volume 1101-1138   First Aid 1157-1179   Partition 1215-1258
+#   Erase  1276-1304   Restore   1322-1361   Unmount   1377-1423   Info 1470
+#
+# And the sidebar, whose rows are read reliably once Show All Devices is on:
+#
+#   Internal                        y=350
+#   Apple Inc. VirtIO Block Media   y=374
+#   Apple Inc. VirtIO Block Media   y=402
+#   disk2s1                         y=418
+VIEW_MENU_BUTTON = (309, 11)
+SHOW_ALL_DEVICES = (345, 63)
+ERASE_BUTTON = (1290, 336)
+SIDEBAR_X = 380
 
 
 def words_of(screen, prefix, tag):
@@ -171,51 +204,53 @@ def main():
         if in_du:
             if not erased:
                 if not erase_clicked:
-                    # Show All Devices first. This is the step that makes the target
-                    # exist: the default view lists volumes, and the empty 64 GiB disk
-                    # has none, so it is absent until this is switched.
-                    if not in_view_menu:
-                        view = None
-                        for word, x, y, _w, _h in words:
-                            if word.strip().lower() == "view" and y < 340:
-                                view = (x, y)
-                                break
-                        if view is not None:
-                            log("opening the View menu at %s" % (view,))
-                            screen.click(view[0], view[1])
-                            in_view_menu = True
-                            time.sleep(3)
-                            continue
-                        log("View control not found in this frame")
-
-                    # "Show All Devices" sits at the bottom of that menu, below
-                    # "Show Only Volumes".
-                    log("choosing Show All Devices")
-                    screen.click(210, 190)
-                    time.sleep(4)
-                    in_view_menu = False
+                    # Show All Devices. Measured, not guessed: the item is at (310,63) and
+                    # the View button at (309,11). The previous guess of (210,190) landed
+                    # outside the menu, so clicking it closed the menu and changed
+                    # nothing - which is why the 64 GiB disk never appeared in the sidebar
+                    # and every erase attempt had nothing to act on.
+                    log("opening the View menu at %s" % (VIEW_MENU_BUTTON,))
+                    screen.click(VIEW_MENU_BUTTON[0], VIEW_MENU_BUTTON[1])
+                    time.sleep(3)
+                    log("choosing Show All Devices at %s" % (SHOW_ALL_DEVICES,))
+                    screen.click(SHOW_ALL_DEVICES[0], SHOW_ALL_DEVICES[1])
+                    time.sleep(5)
                     erase_clicked = True
                     continue
 
-                # Now the sidebar contains physical disks. Select the largest one: the
-                # recovery image and the OpenCore disk are read-only and far smaller,
-                # and the target is the only one measured in tens of gigabytes.
-                log("selecting the largest device in the sidebar")
-                screen.click(540, 340)
-                time.sleep(3)
-                probe = words_of(screen, prefix, "probe")
-                right = " ".join(w[0] for w in probe if w[1] > 900)
-                log("right panel: %s" % right[:160])
+                # Show All Devices has been pressed, so the sidebar now holds physical
+                # disks as well as volumes. Select the row whose text says VirtIO and
+                # whose capacity is tens of gigabytes - the recovery image is read-only
+                # and 2.88 GB, OpenCore is 268 MB, and the target is the only large one.
+                #
+                # The rows are read from the frame rather than assumed: after the switch
+                # the sidebar re-populates, so its layout is not the one in the earlier
+                # frame.
+                rows = [(w[2], w[1], w[0]) for w in words
+                        if "virtio" in w[0].lower() or "virtl" in w[0].lower()]
+                log("sidebar candidates: %s" % (rows,))
 
-                erase = None
-                for word, x, y, _w, _h in words:
-                    if word.strip().lower().startswith("era") and y < 400:
-                        erase = (x, y)
+                target_row = None
+                for y_centre, x_centre, label in rows:
+                    screen.click(x_centre, y_centre)
+                    time.sleep(3)
+                    probe = words_of(screen, prefix, "probe")
+                    right = " ".join(w[0] for w in probe if w[1] > 900)
+                    log("row %s says: %s" % (label, right[:150]))
+                    # The target is the only device reporting tens of GB of capacity.
+                    if re.search(r"(6[0-9]|[1-9][0-9]{2})\.?\d*\s*(GB|TB)", right, re.I):
+                        target_row = (x_centre, y_centre)
+                        log("target disk is the row at (%d,%d)" % target_row)
                         break
-                if erase is not None:
-                    log("clicking Erase at %s" % (erase,))
-                    screen.click(erase[0], erase[1])
-                    time.sleep(10)
+
+                if target_row is None:
+                    log("no row reported a large capacity yet")
+                    time.sleep(5)
+                    continue
+
+                log("clicking Erase at %s" % (ERASE_BUTTON,))
+                screen.click(ERASE_BUTTON[0], ERASE_BUTTON[1])
+                time.sleep(10)
                 continue
 
             # The erase sheet. Its own Erase commits; it is the lowest such control.
