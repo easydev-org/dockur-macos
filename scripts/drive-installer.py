@@ -285,29 +285,45 @@ def main():
                 # earlier version, looking for "64", never found it and kept reporting
                 # "no row reported a large capacity". The absence of both a size and a
                 # child is what separates the unformatted disk from the two images.
-                # Where the sidebar rows are, taken from measured frames rather than
-                # found by text. Trying to filter on x was wrong in both directions: with
-                # no filter the right pane's repeated "VirtIO Block Media" title was
-                # clicked as if it were a row, and with x<700 whole frames came back
-                # empty because the sidebar's left edge moves with the window.
+                # The sidebar legs under "Internal" are SIBLINGS - two physical disks
+                # and one volume - not a tray with a child. Verified by clicking: the
+                # frame after a click at (540,379) reports
                 #
-                # The ROWS themselves are at fixed heights under the "Internal" heading,
-                # which is what the measure gave: 379, 407, 435. Each is clicked and the
-                # right pane consulted, so a wrong guess costs one click rather than
-                # stalling the loop.
+                #   Apple Inc. VirtIO Block Media  Uninitialized  Capacity: Unknown
+                #   Child count: Not Supported     Device: disk0
+                #
+                # which is the 64 GB target, and Erase becomes enabled. Row 2 is the
+                # OpenCore image and row 3 is disk1s1, the 2.88 GB read-only recovery
+                # volume that Disk Utility selects by default - erasing THAT would delete
+                # the installer the guest is running from.
+                #
+                # Rows are addressed by position rather than by text: the detail pane
+                # repeats "VirtIO Block Media" as the selection's title, so a text search
+                # finds those words on both sides of the divider and was clicking x=927 in
+                # the pane. Each row is then confirmed by reading the pane back.
                 rows = [(y, SIDEBAR_CLICK_X, "row@%d" % y)
                         for y in SIDEBAR_ROWS_Y]
                 log("sidebar candidates: %s" % (rows,))
 
+                # x>700 is the detail pane; the sidebar ends around x=660. The earlier
+                # threshold of 900 cut the pane off before its own labels, which start at
+                # x=708 for "Capacity:" and x=781 for the device name, so the capacity
+                # was never actually read.
                 target_row = None
                 for y_centre, x_centre, label in rows:
                     screen.click(x_centre, y_centre)
-                    time.sleep(3)
+                    time.sleep(4)
                     probe = words_of(screen, prefix, "probe")
-                    right = " ".join(w[0] for w in probe if w[1] > 900)
+                    right = " ".join(w[0] for w in probe if w[1] > 700)
                     low = right.lower()
-                    log("row %s says: %s" % (label, right[:160]))
-                    if "capacity: unknown" in low or "child count: not supported" in low:
+                    log("row %s says: %s" % (label, right[:200]))
+                    # The unformatted disk announces itself as Uninitialized with no
+                    # capacity and no child count. Verified against a real frame: after
+                    # clicking (540,379) the pane reads
+                    #   Apple Inc. VirtIO Block Media  Uninitialized  Capacity: Unknown
+                    #   Child count: Not Supported  Device: disk0
+                    if ("uninitialized" in low or "capacity: unknown" in low
+                            or "child count: not supported" in low):
                         target_row = (x_centre, y_centre)
                         log("the unformatted target disk is the row at (%d,%d)"
                             % target_row)
@@ -356,13 +372,17 @@ def main():
                 time.sleep(6)
                 continue
 
-            # The erase sheet. Its own Erase commits; it is the lowest such control.
-            cands = [(w[1], w[2]) for w in words
-                     if w[0].strip().lower().startswith("era") and w[2] > 380]
+            # The erase sheet asks for nothing that is not already filled in: Name is
+            # preset, Format defaults to APFS and Scheme to GUID Partition Map, which is
+            # what an install target needs. Its own Erase button is the one that commits,
+            # and it is the LOWEST such control on screen because the toolbar's Erase is
+            # at y=332 while the sheet's is near its bottom edge.
+            cands = [(w[2], w[1] + w[3] // 2) for w in words
+                     if w[0].strip().lower().startswith("era")]
             if cands:
-                target = cands[-1]
-                log("confirming Erase at %s" % (target,))
-                screen.click(target[0], target[1])
+                y_low, x_low = max(cands)
+                log("confirming Erase at (%d,%d)" % (x_low, y_low))
+                screen.click(x_low, y_low)
                 time.sleep(30)
                 erased = True
                 continue
