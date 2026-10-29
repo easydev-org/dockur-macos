@@ -86,46 +86,25 @@ jobs:
           ls -la "storage/$V/" || true
           sudo docker rm -f dlg >/dev/null 2>&1 || true
 
-      # qemu-img understands UDIF well enough to convert it to raw, and a raw image can be
-      # searched directly - no mounting, no special tooling. That is simpler than trying to
-      # unpack the DMG's HFS payload.
-      - name: find the script by content
+      # Ask patch.py itself. It already decodes every chunk of this DMG in order to
+      # search it, so its decode step is reused with the search aimed at a word the
+      # script always contains.
+      #
+      # Two earlier attempts went the long way round and both failed for their own
+      # reasons: qemu-img produced a 3.2 GB raw image whose grep hits were HFS+ catalog
+      # nodes at 248 MB, and 7-Zip's extraction did not surface the file either. Reading
+      # the container properly is what patch.py already does.
+      - name: dump the chunks containing the script
         run: |
-          set -eux
+          set -ux
           V="${{ github.event.inputs.macos_version }}"
           SRC="storage/$V/setup.dmg"
           [ -s "$SRC" ] || { echo "::error::no setup.dmg"; exit 1; }
+          ls -la "$SRC"
 
-          qemu-img convert -O raw "$SRC" /tmp/rec.raw || \
-            qemu-img convert -O raw -f dmg "$SRC" /tmp/rec.raw
-          ls -la /tmp/rec.raw
-
-          # The first attempt grepped for "diskarbitrationd" in the raw image and got
-          # binary: those hits are at 248 MB, inside HFS+ catalog nodes and system files,
-          # not the script itself. The filesystem has to be read, not scanned.
-          #
-          # 7-Zip understands HFS+, so extract properly and then look at real files.
-          echo "=== volume layout ==="
-          7z l /tmp/rec.raw | head -40 || true
-
-          rm -rf /tmp/rec && mkdir -p /tmp/rec
-          7z x -y -o/tmp/rec /tmp/rec.raw >/tmp/7z.log 2>&1 || true
-          tail -20 /tmp/7z.log || true
-
-          echo "=== extracted top level ==="
-          find /tmp/rec -maxdepth 2 | head -40 || true
-
-          echo "=== every file containing diskarbitrationd ==="
-          grep -rla "diskarbitrationd" /tmp/rec 2>/dev/null | head -20 || true
-
-          # The script is the one whose first line is a shell shebang and which is small.
-          for f in $(grep -rla "diskarbitrationd" /tmp/rec 2>/dev/null); do
-            size=$(stat -c %s "$f" 2>/dev/null || echo 999999)
-            [ "$size" -lt 60000 ] || continue
-            echo "=== $f ($size bytes) ==="
-            head -80 "$f" || true
-            echo "=== end ==="
-          done
+          python3 src/install/recovery/patch.py --dump "$SRC" > /tmp/dump.txt 2>&1 || true
+          echo "dump size: $(wc -c < /tmp/dump.txt) bytes"
+          head -400 /tmp/dump.txt
 
       - name: keep the extraction
         if: always()
@@ -133,7 +112,7 @@ jobs:
         with:
           name: recovery-context
           path: |
-            /tmp/rec/**
+            /tmp/dump.txt
           if-no-files-found: warn
           retention-days: 7
           compression-level: 0

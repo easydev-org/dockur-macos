@@ -40,7 +40,89 @@ def find_all(data, needle):
         start = offset + 1
 
 
+def dump_mode(path, needle=b"diskarbitrationd"):
+    """Print every decoded DMG chunk that contains `needle`, with context.
+
+    WHY THIS EXISTS. Fixing the patch for macOS 15 and 26 needs the real text of
+    /etc/rc.cdrom.sh from those images, and that text is inside a compressed UDIF
+    container. Two attempts to get it the hard way both failed for instructive reasons:
+
+      converting the DMG to a raw 3.2 GB image and grepping it returned file-system
+      metadata, because scanning an image for text does not read a filesystem
+
+      the hits that did appear were at 248 MB, inside HFS+ catalog nodes and binaries
+
+    This function needs neither. The patch already decodes every chunk of the DMG in
+    order to search it, so the decode step is reused and the search is simply aimed at a
+    word the script always contains. Whatever comes back is the script's own bytes.
+    """
+    with open(path, "rb") as image:
+        image.seek(0, 2)
+        size = image.tell()
+        image.seek(size - 512)
+        koly = image.read(512)
+        if koly[:4] != b"koly":
+            raise RuntimeError("Recovery image has no UDIF koly trailer")
+
+        data_fork_offset = be64(koly, 24)
+        xml_offset = be64(koly, 216)
+        xml_length = be64(koly, 224)
+
+        image.seek(xml_offset)
+        plist = plistlib.loads(image.read(xml_length))
+
+        found = 0
+        for blkx_index, blkx in enumerate(plist["resource-fork"]["blkx"]):
+            mish = blkx["Data"]
+            if mish[:4] != b"mish":
+                continue
+
+            first_sector = be64(mish, 8)
+            mish_data_offset = be64(mish, 24)
+            run_count = (len(mish) - 204) // 40
+
+            for run_index in range(run_count):
+                entry = 204 + run_index * 40
+                run_type = be32(mish, entry)
+                if run_type not in (UDRW, UDZO):
+                    continue
+
+                compressed_offset = be64(mish, entry + 24)
+                compressed_length = be64(mish, entry + 32)
+                physical_offset = data_fork_offset + mish_data_offset + compressed_offset
+
+                image.seek(physical_offset)
+                stored = image.read(compressed_length)
+                if len(stored) != compressed_length:
+                    continue
+
+                try:
+                    decoded = stored if run_type == UDRW else zlib.decompress(stored)
+                except Exception:
+                    continue
+
+                start = 0
+                while True:
+                    at = decoded.find(needle, start)
+                    if at < 0:
+                        break
+                    found += 1
+                    lo = max(0, at - 3000)
+                    hi = min(len(decoded), at + 3000)
+                    print("=== blkx %d run %d, offset %d ===" % (blkx_index, run_index, at))
+                    chunk = decoded[lo:hi]
+                    # latin-1 keeps every byte visible without raising on binary.
+                    print(chunk.decode("latin-1", "replace"))
+                    start = at + 1
+
+        print("=== %d occurrence(s) found ===" % found)
+    return 0
+
+
 def main():
+    if len(sys.argv) > 2 and sys.argv[1] == "--dump":
+        return dump_mode(sys.argv[2])
+
     path = sys.argv[1]
 
     if len(SCRIPT_BOOTSTRAP) + 2 > len(SCRIPT_ORIGINAL):
@@ -232,7 +314,8 @@ def main():
 
 
 try:
-    main()
+    # sys.exit so --dump's return code is honoured; calling main() plainly discarded it.
+    sys.exit(main())
 except Exception as exc:
     print(f"Recovery bootstrap patch failed: {exc}", file=sys.stderr)
     raise SystemExit(1)
