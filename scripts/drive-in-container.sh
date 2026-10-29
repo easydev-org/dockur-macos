@@ -51,6 +51,16 @@ if [ -n "$SETUP_DMG" ]; then
 else
   SETUP_ARG=""
 fi
+
+# A small FAT disk carrying the erase script. Recovery mounts every attached volume by
+# itself, so this shows up as /Volumes/ERASE without anything being clicked - which is
+# the point: the QMP keyboard channel can deliver a short path but not a shell script
+# with loops and quoting in it.
+HELPER_ARG=""
+if [ -s "$VMDIR/erase.img" ]; then
+  log "helper disk present, will attach at PCI 0x8"
+  HELPER_ARG="-drive file=$VMDIR/erase.img,id=Helper,format=raw,cache=unsafe,if=none -device virtio-blk-pci,drive=Helper,bus=pcie.0,addr=0x8"
+fi
 log "disk $(du -h "$VMDIR/data.img" | cut -f1), starting qemu"
 
 CPU="Skylake-Client-v4,kvm=on,l3-cache=on,+hypervisor,+invtsc,vendor=GenuineIntel,vmx=off,vmware-cpuid-freq=on,-pdpe1gb,-spec-ctrl,+pcid,+invpcid,-tsc-deadline,+xsavec,+xsaves,+ssse3,+sse4.2,+popcnt,+avx,+avx2,+aes,+fma,+bmi1,+bmi2,+smep,+xsave,+xsaveopt,+xgetbv1,+movbe,+rdrand,check"
@@ -85,6 +95,7 @@ qemu-system-x86_64 \
   -device virtio-blk-pci,drive=data3,bus=pcie.0,addr=0xa,iothread=io2,bootindex=3 \
   -object iothread,id=io2 \
   $SETUP_ARG \
+  $HELPER_ARG \
   -drive file="$VMDIR/boot.img",id=OpenCore,format=raw,cache=unsafe,readonly=on,if=none \
   -device virtio-blk-pci,drive=OpenCore,bus=pcie.0,addr=0x5,bootindex=9 \
   -rtc base=utc \

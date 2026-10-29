@@ -280,6 +280,24 @@ jobs:
           cp --sparse=always "storage/$V/data.img" vm/data.img
           ls -la vm/
 
+          # The erase script, on a small FAT disk the guest mounts by itself.
+          #
+          # Recovery mounts every attached volume automatically, so this appears as
+          # /Volumes/ERASE with no interaction. That matters because the only thing the
+          # driver can reliably type is a short path: the QMP keyboard channel cannot
+          # carry a pipe, loses double quotes, truncates long lines and mangles
+          # capitals. A shell script with loops and quoting cannot cross it, and the
+          # erase is exactly such a script - the unattended installer runs one, but
+          # MANUAL=Y never injects it.
+          sudo apt-get install -y -qq dosfstools mtools
+          rm -f vm/erase.img
+          dd if=/dev/zero of=vm/erase.img bs=1M count=4 status=none
+          mkfs.vfat -n ERASE vm/erase.img
+          # -i targets the image, -n writes to it; the name has to be e.sh because the
+          # driver types /Volumes/ERASE/e.sh and nothing longer survives.
+          mcopy -i vm/erase.img scripts/guest/erase.sh ::e.sh
+          mdir -i vm/erase.img ::
+
           chmod +x scripts/drive-in-container.sh
           docker run -d --name macinst \
             --device=/dev/kvm \
