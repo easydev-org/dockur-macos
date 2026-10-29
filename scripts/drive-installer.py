@@ -108,7 +108,10 @@ ROW_TOLERANCE = 40
 #   Apple Inc. VirtIO Block Media   y=402
 #   disk2s1                         y=418
 SHOW_ALL_DEVICES = (345, 63)
-ERASE_BUTTON = (1290, 318)
+# The Erase tab's usable point, found by sweeping: y=306 opened the sheet on the frame
+# where y=300 did not. The label's box is y=332-340, so the control's hit area sits ABOVE
+# its text - clicking the label's centre (318 or 336) does nothing.
+ERASE_BUTTON = (1290, 306)
 SIDEBAR_X = 380
 
 # Sidebar row heights and the x to click inside them, from measured frames. The rows sit
@@ -411,7 +414,7 @@ def main():
                 erase_btn = None
                 for word, x, y, _w, _h in words:
                     if word.strip().lower().startswith("era") and 300 < y < 380:
-                        erase_btn = (x, 318)
+                        erase_btn = (x, 306)
                         break
                 if erase_btn is None:
                     erase_btn = ERASE_BUTTON
