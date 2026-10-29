@@ -21,6 +21,10 @@ on:
         type: boolean
         required: false
         default: false
+      macos_version:
+        description: "macOS version to install (14, 15, 26)"
+        required: false
+        default: "14"
 
 permissions:
   contents: read
@@ -137,7 +141,7 @@ jobs:
           # which macOS cannot reach Apple to fetch the rest of the installer.
           docker run -d --name macbake \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
-            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e VERSION=${{ github.event.inputs.macos_version }} -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=N \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             "${{ needs.build.outputs.image }}"
@@ -206,7 +210,7 @@ jobs:
           set -eux
           sudo apt-get install -y -qq gdisk || true
           chmod +x scripts/inspect-installed-disk.sh
-          sudo bash scripts/inspect-installed-disk.sh             "$GITHUB_WORKSPACE/storage/14/data.img"
+          sudo bash scripts/inspect-installed-disk.sh             "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/data.img"
 
       # The disk holds a complete macOS - 692 boot.efi hits, 128
       # System/Library/CoreServices, 455 Preboot, on an AF0A APFS partition - but
@@ -233,20 +237,20 @@ jobs:
           chmod +x scripts/fix-opencore-apfs.sh
           sudo -E LAUNCHER_IMAGE="${{ needs.build.outputs.image }}" \
             bash scripts/fix-opencore-apfs.sh \
-            "$GITHUB_WORKSPACE/storage/14/data.img" \
-            "$GITHUB_WORKSPACE/storage/14/boot.img"
+            "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/data.img" \
+            "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/boot.img"
 
           WORK=/tmp/apfscfg
           rm -rf "$WORK"; mkdir -p "$WORK"
-          sudo mcopy -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+          sudo mcopy -i "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/boot.img@@1M" \
             ::/EFI/OC/config.plist "$WORK/config.plist"
           sudo chown "$(id -u):$(id -g)" "$WORK/config.plist"
           python3 scripts/enable-apfs-driver.py "$WORK/config.plist"
-          sudo mcopy -o -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+          sudo mcopy -o -i "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/boot.img@@1M" \
             "$WORK/config.plist" ::/EFI/OC/config.plist
 
           echo "=== config as stored in boot.img ==="
-          sudo mcopy -i "$GITHUB_WORKSPACE/storage/14/boot.img@@1M" \
+          sudo mcopy -i "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}/boot.img@@1M" \
             ::/EFI/OC/config.plist "$WORK/verify.plist"
           python3 scripts/check-config-drivers.py "$WORK/verify.plist"
 
@@ -278,7 +282,7 @@ jobs:
           docker rm -f macbake || true
           docker run -d --name macstage2 \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
-            -e VERSION=14 -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e VERSION=${{ github.event.inputs.macos_version }} -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=Y \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             "${{ needs.build.outputs.image }}"
@@ -343,7 +347,7 @@ jobs:
           # window earlier existed to watch an install that never happened.
           chmod +x scripts/boot-golden.sh
           sudo -E bash scripts/boot-golden.sh \
-            "$GITHUB_WORKSPACE/storage/14" \
+            "$GITHUB_WORKSPACE/storage/${{ github.event.inputs.macos_version }}" \
             /tmp/golden-monitor.sock \
             600 &
           BOOT_WAIT=$!
