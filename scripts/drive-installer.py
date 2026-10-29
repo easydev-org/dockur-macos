@@ -171,7 +171,10 @@ def main():
         return None
 
     erased = False
-    for step in range(1, 100):
+    erase_clicked = False
+    target_disk = None
+    probed = 0
+    for step in range(1, 140):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
         joined = " ".join(w[0] for w in words).lower()
@@ -182,56 +185,99 @@ def main():
             screen.close()
             return 0
 
-        in_disk_utility = "first aid" in joined or "partition" in joined
+        # Is Disk Utility running? Do not test "first aid": OCR reads it as
+        # "first ald" in every frame of this pane, so that test never fired and the
+        # driver stayed on the recovery menu for a hundred steps. The window title and
+        # its Erase control both read reliably instead.
+        in_disk_utility = ("disk utility" in joined and "erase" in joined)                           or "first ald" in joined or "physical volume" in joined
 
-        # Inside Disk Utility. Three things have to happen, in this order: select the
-        # RIGHT disk, erase it, then quit back to the menu.
-        #
-        # The sidebar lists two VirtIO disks plus whatever volume is mounted from the
-        # recovery image, and the frame showed disk2s1 - the recovery volume, 2.88 GB
-        # with 2.43 GB used - selected by default. Erasing that would delete the
-        # installer itself and leave nothing to install from. The target is the empty
-        # 64 GB disk, which appears in the sidebar as "Apple Inc. VirtIO Block Media".
         if in_disk_utility:
             if not erased:
-                # Pick the disk that is NOT the recovery image. The recovery volume is
-                # small and carries a size in its row; the 64 GB target does not.
-                pick = None
-                for word, x, y, _w, _h in words:
-                    if "virtio" in word.lower() and 300 < x < 900:
-                        pick = (x, y)
-                        break
-                if pick is not None:
-                    log("selecting the target disk at %s" % (pick,))
-                    screen.click(pick[0], pick[1])
-                    time.sleep(4)
-                    log("clicking Erase at %s" % (ERASE_BUTTON,))
-                    screen.click(ERASE_BUTTON[0], ERASE_BUTTON[1])
-                    time.sleep(8)
+                # WHICH DISK IS THE TARGET, decided by capacity rather than position.
+                #
+                # The sidebar holds three rows - two "Apple Inc. VirtIO Block Media"
+                # and the disk1s1 volume the recovery image is mounted from - and they
+                # are SIBLINGS, not a parent and its child. Nothing on the row says
+                # which of the two disks is the empty 64 GB one, and disk1s1 is
+                # selected by default: erasing that would delete the installer the
+                # guest is running from.
+                #
+                # The one reliable distinction is what the pane shows after selecting a
+                # row - the volume's capacity. So each VirtIO row is clicked in turn and
+                # read: the 64 GB disk is the one whose capacity contains "64".
+                if target_disk is None:
+                    virtio = sorted([(w[2], w[1]) for w in words
+                                     if "virtio" in w[0].lower() and w[1] < 900])
+                    if not virtio:
+                        log("no VirtIO row in the sidebar yet")
+                        continue
+                    if probed < len(virtio):
+                        vy, vx = virtio[probed]
+                        probed = probed + 1
+                        log("probing VirtIO row %d at (%d,%d)" % (probed - 1, vx, vy))
+                        screen.click(vx + 120, vy)
+                        time.sleep(3)
+                        after = screen.text(screen.grab("%s-probe%d" % (prefix, probed)))
+                        right = [w[0] for w in after if w[1] > 900]
+                        log("right panel says: %s" % " ".join(right)[:180])
+                        if any("64" in w for w in right):
+                            target_disk = (vx, vy)
+                            log("the 64 GB disk is row %d at (%d,%d)" % (probed - 1, vx, vy))
+                        continue
+                    # No capacity readable at all: fall back to the first row, which is
+                    # the disk rather than the mounted volume.
+                    target_disk = (virtio[0][1], virtio[0][0])
+                    log("capacities unreadable; using the first row %s" % (target_disk,))
                     continue
-                log("no VirtIO entry found in the sidebar; listing what is there: %s"
-                    % joined[:200])
-                continue
 
-            # The erase sheet: name and format are pre-filled acceptably, and its own
-            # Erase button is the one that commits.
-            if "erase" in joined:
-                target = find(words, "erase")
-                if target is not None:
+                # The target is known. Select it, then press the Erase control, whose
+                # position is read from the frame: the toolbar sits at y=264 on one
+                # window and y=288 on another, so a hardcoded point lands on Partition
+                # half the time.
+                if not erase_clicked:
+                    log("selecting the target disk at %s" % (target_disk,))
+                    screen.click(target_disk[0] + 120, target_disk[1])
+                    time.sleep(3)
+                    erase = None
+                    for word, x, y, _w, _h in words:
+                        if word.strip().lower().startswith("era") and y < 400:
+                            erase = (x, y)
+                            break
+                    if erase is None:
+                        log("Erase control not found in this frame")
+                        continue
+                    log("clicking Erase at %s" % (erase,))
+                    screen.click(erase[0], erase[1])
+                    erase_clicked = True
+                    time.sleep(10)
+                    continue
+
+                # The erase sheet. Its own Erase is the one that commits, and it sits
+                # low on the sheet, so the lowest matching candidate is taken.
+                cands = [(w[1], w[2]) for w in words
+                         if w[0].strip().lower().startswith("era") and w[2] > 380]
+                if cands:
+                    target = cands[-1]
                     log("confirming Erase at %s" % (target,))
                     screen.click(target[0], target[1])
-                    time.sleep(20)
+                    time.sleep(25)
                     erased = True
                     continue
 
-            # After erasing, leave Disk Utility so the installer can use the disk.
-            # Its menu is Cmd-Q, and Disk Utility has no close button in recovery.
+                log("waiting for the erase sheet")
+                time.sleep(5)
+                continue
+
+            # Erased. Leave Disk Utility - recovery has no close button, and the
+            # installer list only returns when it is quit.
             log("leaving Disk Utility to return to the installer list")
             qmpmod.key_combo(screen.q, "meta_l", "q")
             time.sleep(12)
             continue
 
-        # Outside Disk Utility: the recovery tool list. Selecting an entry only
+        # Outside Disk Utility: the recovery tool list.
+# Outside Disk Utility: the recovery tool list.
+# Outside Disk Utility: the recovery tool list. Selecting an entry only
         # highlights it - the frame after seventy-nine clicks still showed the menu
         # with Disk Utility greyed - so Continue at (1142,588) is what opens it.
         target = entry("disk utility") if not erased else None
