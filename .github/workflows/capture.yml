@@ -16,7 +16,7 @@ on:
       minutes:
         description: "How long to capture"
         required: false
-        default: "60"
+        default: "25"
 
 permissions:
   contents: read
@@ -93,6 +93,7 @@ jobs:
 
           elapsed=0
           n=0
+          same=0
           while [ "$elapsed" -lt "$TOTAL" ]; do
             n=$((n + 1))
             name=$(printf 'shot-%03d-t%04ds' "$n" "$elapsed")
@@ -109,6 +110,25 @@ jobs:
             # Record what the container is doing at this moment as well: when the guest is
             # on a black screen, the log is the only thing that says why.
             sudo docker logs --tail 3 cap >>"shots/$name.log" 2>&1 || true
+
+            # Stop once the screen stops changing.
+            #
+            # The artifact can only be downloaded after the job ends, so a run that keeps
+            # photographing an unchanging screen costs minutes and adds nothing. Four
+            # identical frames in a row is two minutes of the same picture: by then the
+            # guest has settled and the last frame IS the answer.
+            prev=$(ls shots/*.ppm 2>/dev/null | tail -2 | head -1)
+            cur=$(ls shots/*.ppm 2>/dev/null | tail -1)
+            if [ -n "$prev" ] && [ -n "$cur" ] && cmp -s "$prev" "$cur"; then
+              same=$((same + 1))
+              echo "$cur is identical to the previous frame ($same in a row)"
+              if [ "$same" -ge 4 ]; then
+                echo "screen unchanged for $((same * 30))s; stopping capture early"
+                break
+              fi
+            else
+              same=0
+            fi
 
             sleep 28
             elapsed=$((elapsed + 30))
