@@ -107,7 +107,6 @@ ROW_TOLERANCE = 40
 #   Apple Inc. VirtIO Block Media   y=374
 #   Apple Inc. VirtIO Block Media   y=402
 #   disk2s1                         y=418
-VIEW_MENU_BUTTON = (309, 11)
 SHOW_ALL_DEVICES = (345, 63)
 ERASE_BUTTON = (1290, 336)
 SIDEBAR_X = 380
@@ -231,22 +230,34 @@ def main():
         if in_du:
             if not erased:
                 if not erase_clicked:
-                    # Show All Devices. Measured, not guessed: the item is at (310,63) and
-                    # the View button at (309,11). The previous guess of (210,190) landed
-                    # outside the menu, so clicking it closed the menu and changed
-                    # nothing - which is why the 64 GiB disk never appeared in the sidebar
-                    # and every erase attempt had nothing to act on.
-                    log("opening the View menu at %s" % (VIEW_MENU_BUTTON,))
-                    screen.click(VIEW_MENU_BUTTON[0], VIEW_MENU_BUTTON[1])
+                    # The View control is a BUTTON IN THE WINDOW TOOLBAR, at about
+                    # (707, 339) - tesseract reads it as "iew" at x=700,y=334 - not a
+                    # menu-bar item. The menu bar at the top of the screen also has a
+                    # "View" word on a different window state, and clicking there does
+                    # nothing here; (309,11) was that mistake and it silently failed,
+                    # leaving Show Only Volumes in force and the sidebar holding just the
+                    # k2s1 volume.
+                    #
+                    # So it is located from the frame: a word ending in "iew" below the
+                    # menu bar. That survives the truncation tesseract applies to it.
+                    view_btn = None
+                    for word, x, y, w, _h in words:
+                        low = word.strip().lower()
+                        if low.endswith("iew") and 300 < y < 380:
+                            view_btn = (x + w // 2, y)
+                            break
+                    if view_btn is None:
+                        log("View button not found in this frame: %s" % text[:120])
+                        time.sleep(5)
+                        continue
+                    log("opening the View menu at %s" % (view_btn,))
+                    screen.click(view_btn[0], view_btn[1])
                     time.sleep(3)
                     log("choosing Show All Devices at %s" % (SHOW_ALL_DEVICES,))
                     screen.click(SHOW_ALL_DEVICES[0], SHOW_ALL_DEVICES[1])
-                    time.sleep(5)
+                    time.sleep(6)
                     erase_clicked = True
                     continue
-
-                # Show All Devices has been pressed, so the sidebar now holds physical
-                # disks as well as volumes. Three entries appear, and their measured
                 # capacities identify them:
                 #
                 #   Capacity: Unknown    Child count: Not Supported   <- the target
