@@ -213,12 +213,20 @@ def main():
             return 0
 
         # --- Disk Utility -------------------------------------------------------
-        # Identified by its toolbar, which the recovery menu does not have. Three of
-        # Volume/Partition/Restore/Unmount/First Aid together is unambiguous; the menu's
-        # prose never puts those words on one line.
+        # Its toolbar is the natural signal, but it does not always read cleanly: one
+        # captured frame returned the row as "view ad taro le" - First Aid as "fa",
+        # Partition as "taro", Volume gone - which is fewer than three toolbar words and
+        # left the driver reporting "waiting for the recovery menu" while Disk Utility was
+        # filling the screen.
+        #
+        # The sidebar is the sturdier evidence. "Apple Inc. VirtIO Block Media" appears in
+        # every Disk Utility frame and in none of the recovery menu, which lists four
+        # entries and no device names. tesseract renders it "VirtlO" as often as
+        # "VirtIO", so both spellings are accepted.
         toolbar = sum(1 for w in text.split()
                       if w in ("volume", "partition", "restore", "unmount", "first", "ald"))
-        in_du = toolbar >= 3 or "physical volume" in text
+        has_devices = "virtio" in text or "virtlo" in text
+        in_du = has_devices or toolbar >= 3 or "physical volume" in text
 
         if in_du:
             if not erased:
