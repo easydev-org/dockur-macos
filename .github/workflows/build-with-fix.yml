@@ -320,16 +320,24 @@ jobs:
           ls -la frames/ || true
 
           sudo apt-get install -y -qq tesseract-ocr
-          sudo python3 scripts/drive-installer.py \
+          # Probe rather than drive, for now. Disk Utility's View menu is the one
+          # unmeasured thing left between this and a working erase: its sidebar lists
+          # VOLUMES, and the empty 64 GiB target has none, so "Show All Devices" is what
+          # makes the disk exist - and that menu item's position has only ever been
+          # guessed. This opens the menu and photographs it.
+          sudo python3 scripts/probe-view-menu.py \
             "$GITHUB_WORKSPACE/frames/monitor.sock" \
-            "$GITHUB_WORKSPACE/frames/stage1" || true
+            "$GITHUB_WORKSPACE/frames/probe" || true
           sudo chown -R "$(id -u):$(id -g)" frames || true
           docker rm -f macinst >/dev/null 2>&1 || true
           echo "=== installer log ==="
           tail -80 frames/stage1-installer.log 2>/dev/null || true
 
       - name: did the manual install reach Setup Assistant
-        if: github.event.inputs.manual_install == 'true'
+        # Not asserted while the driver is a probe. This step exists to fail a run whose
+        # disk is not usable, and a probe run produces no disk on purpose - it only
+        # measures where the View menu puts its items.
+        if: false
         run: |
           set -eux
           if grep -q "SETUP ASSISTANT REACHED" frames/stage1-installer.log 2>/dev/null; then
