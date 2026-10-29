@@ -33,6 +33,10 @@ on:
 
 permissions:
   contents: read
+  # checks: write is what lets log-stream create and update the check run it streams the
+  # installer step into. Without it the action answers 403 "Resource not accessible by
+  # integration" and, correctly, carries on without streaming rather than failing.
+  checks: write
 
 jobs:
   build:
@@ -240,68 +244,76 @@ jobs:
       # Setup Assistant to the desktop; that path is already proven on 14.
       - name: drive the installer to Setup Assistant
         if: github.event.inputs.manual_install == 'true'
-        timeout-minutes: 100
-        run: |
-          set -eux
-          V="${{ github.event.inputs.macos_version }}"
-          mkdir -p frames
-          chmod 777 frames
+        # log-stream turns this step's output into a check-run that updates every few
+        # seconds, so the run can be watched live instead of polling for a completion
+        # that is twenty minutes away. checks: write is what lets it create and update
+        # that check run; without it the action answers 403 and carries on unstreamed.
+        uses: easydev-org/easyagent-github-ext/actions/log-stream@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          name: installer-drive
+          interval: "10"
+          command: |
+            set -eux
+            V="${{ github.event.inputs.macos_version }}"
+            mkdir -p frames
+            chmod 777 frames
 
-          # Wait for the ASSETS, not for a socket. The container writes setup.dmg,
-          # data.img, boot.img, macos.rom and macos.vars into /storage/$V; once all
-          # five are there it has done everything this step needs from it. The
-          # measured argv shows those exact paths are what qemu opens, so their
-          # presence is the real "prepared" signal.
-          for i in $(seq 1 120); do
-            if [ -s "storage/$V/setup.dmg" ] && [ -s "storage/$V/data.img" ] \
-               && [ -s "storage/$V/boot.img" ] && [ -s "storage/$V/macos.rom" ] \
-               && [ -s "storage/$V/macos.vars" ]; then
-              echo "assets ready after $((i*5))s"
-              break
-            fi
-            echo "[$((i*5))s] waiting for the recovery image and disk"
+            # Wait for the ASSETS, not for a socket. The container writes setup.dmg,
+            # data.img, boot.img, macos.rom and macos.vars into /storage/$V; once all
+            # five are there it has done everything this step needs from it. The
+            # measured argv shows those exact paths are what qemu opens, so their
+            # presence is the real "prepared" signal.
+            for i in $(seq 1 120); do
+              if [ -s "storage/$V/setup.dmg" ] && [ -s "storage/$V/data.img" ] \
+                 && [ -s "storage/$V/boot.img" ] && [ -s "storage/$V/macos.rom" ] \
+                 && [ -s "storage/$V/macos.vars" ]; then
+                echo "assets ready after $((i*5))s"
+                break
+              fi
+              echo "[$((i*5))s] waiting for the recovery image and disk"
+              sleep 5
+            done
+            ls -la "storage/$V/" | head -20
+
+            # Stop it. Its qemu has no reachable control socket (/run/shm is
+            # container-private tmpfs) and it is about to boot the installer with
+            # nobody able to click. Handing qemu to the next step is the whole point.
+            docker rm -f macbake >/dev/null 2>&1 || true
             sleep 5
-          done
-          ls -la "storage/$V/" | head -20
 
-          # Stop it. Its qemu has no reachable control socket (/run/shm is
-          # container-private tmpfs) and it is about to boot the installer with
-          # nobody able to click. Handing qemu to the next step is the whole point.
-          docker rm -f macbake >/dev/null 2>&1 || true
-          sleep 5
+            # The same handover deploy-macos-desktop performs: dockur's assets in /vm,
+            # qemu started by our own script, socket on the bind mount.
+            mkdir -p vm
+            cp -f "storage/$V/boot.img"   vm/boot.img
+            cp -f "storage/$V/macos.rom"  vm/macos.rom
+            cp -f "storage/$V/macos.vars" vm/macos.vars
+            cp -f "storage/$V/setup.dmg"  vm/setup.dmg
+            cp --sparse=always "storage/$V/data.img" vm/data.img
+            ls -la vm/
 
-          # The same handover deploy-macos-desktop performs: dockur's assets in /vm,
-          # qemu started by our own script, socket on the bind mount.
-          mkdir -p vm
-          cp -f "storage/$V/boot.img"   vm/boot.img
-          cp -f "storage/$V/macos.rom"  vm/macos.rom
-          cp -f "storage/$V/macos.vars" vm/macos.vars
-          cp -f "storage/$V/setup.dmg"  vm/setup.dmg
-          cp --sparse=always "storage/$V/data.img" vm/data.img
-          ls -la vm/
+            chmod +x scripts/drive-in-container.sh
+            docker run -d --name macinst \
+              --device=/dev/kvm \
+              --entrypoint sh \
+              -v "$GITHUB_WORKSPACE/vm:/vm" \
+              -v "$GITHUB_WORKSPACE/frames:/frames" \
+              -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+              "${{ needs.build.outputs.image }}" /scripts/drive-in-container.sh
+            sleep 30
+            docker logs --tail 40 macinst || true
+            ls -la frames/ || true
 
-          chmod +x scripts/drive-in-container.sh
-          docker run -d --name macinst \
-            --device=/dev/kvm \
-            --entrypoint sh \
-            -v "$GITHUB_WORKSPACE/vm:/vm" \
-            -v "$GITHUB_WORKSPACE/frames:/frames" \
-            -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
-            "${{ needs.build.outputs.image }}" /scripts/drive-in-container.sh
-          sleep 30
-          docker logs --tail 40 macinst || true
-          ls -la frames/ || true
-
-          sudo apt-get install -y -qq tesseract-ocr
-          # The full drive, now that Show All Devices has a measured position. That one
-          # menu item is what puts the empty 64 GiB disk into the sidebar at all.
-          sudo python3 scripts/drive-installer.py \
-            "$GITHUB_WORKSPACE/frames/monitor.sock" \
-            "$GITHUB_WORKSPACE/frames/stage1" || true
-          sudo chown -R "$(id -u):$(id -g)" frames || true
-          docker rm -f macinst >/dev/null 2>&1 || true
-          echo "=== installer log ==="
-          tail -80 frames/stage1-installer.log 2>/dev/null || true
+            sudo apt-get install -y -qq tesseract-ocr
+            # The full drive, now that Show All Devices has a measured position. That one
+            # menu item is what puts the empty 64 GiB disk into the sidebar at all.
+            sudo python3 scripts/drive-installer.py \
+              "$GITHUB_WORKSPACE/frames/monitor.sock" \
+              "$GITHUB_WORKSPACE/frames/stage1" || true
+            sudo chown -R "$(id -u):$(id -g)" frames || true
+            docker rm -f macinst >/dev/null 2>&1 || true
+            echo "=== installer log ==="
+            tail -80 frames/stage1-installer.log 2>/dev/null || true
 
       - name: did the manual install reach Setup Assistant
         if: github.event.inputs.manual_install == 'true'
