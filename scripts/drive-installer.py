@@ -169,13 +169,21 @@ def main():
                 time.sleep(15)
             continue
 
-        if "install macos" in joined:
-            target = find(words, "install macos")
+        # The install entry, whose label differs by version and was the reason this
+        # loop ran fifty-nine steps without moving. macOS 15 says
+        #
+        #   Reinstall macOS Sequoia - Install a new copy of macOS Sequoia onto your Mac
+        #
+        # so "install macos" never matches: there is no such phrase on the pane. The
+        # word to look for is "reinstall", with "install" as the fallback for versions
+        # that word it the other way.
+        if "reinstall" in joined or "install macos" in joined:
+            target = find(words, "reinstall", "install macos")
             if target:
                 log("starting the install at %s" % (target,))
                 screen.click(target[0], target[1])
                 time.sleep(15)
-            continue
+                continue
 
         if "continue" in joined or "agree" in joined or "install" in joined:
             target = find(words, "continue", "agree")
