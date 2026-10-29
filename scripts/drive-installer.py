@@ -265,19 +265,52 @@ def main():
                             break
                     if view_btn is None:
                         # Fallback: the toolbar's own geometry. Volume is at x=1101, so
-                        # View - the first control - is around x=707, y=334.
+                        # View - the first control - is around x=707, y=334. The menu
+                        # opening is verified below, so a fallback that misses costs one
+                        # pass rather than being taken as success.
                         view_btn = (707, 339)
                         log("View not matched; using the measured fallback %s" % (view_btn,))
-                    if view_btn is None:
-                        log("View button not found in this frame: %s" % text[:120])
-                        time.sleep(5)
-                        continue
                     log("opening the View menu at %s" % (view_btn,))
                     screen.click(view_btn[0], view_btn[1])
                     time.sleep(3)
-                    log("choosing Show All Devices at %s" % (SHOW_ALL_DEVICES,))
-                    screen.click(SHOW_ALL_DEVICES[0], SHOW_ALL_DEVICES[1])
+
+                    # VERIFY the menu opened before choosing from it. Without this the run
+                    # at 16:55 clicked a fallback point that missed the button, then
+                    # clicked (345,63) into empty window space, and reported success - the
+                    # sidebar still listed only the k2s1 volume, so row@379 was OpenCore's
+                    # 268.4 MB and no 64 GB disk existed to select.
+                    menu_words = words_of(screen, prefix, "viewmenu")
+                    menu_text = joined(menu_words)
+                    log("View menu shows: %s" % menu_text[:160])
+                    if "show all devices" not in menu_text and "all" not in menu_text:
+                        log("View menu did not open; retrying next pass")
+                        time.sleep(4)
+                        continue
+
+                    # Take the menu item's own position when OCR reports it; the menu
+                    # drops below the button, so its y follows view_btn rather than a
+                    # constant.
+                    item = None
+                    for word, x, y, _w, _h in menu_words:
+                        if word.strip().lower() == "all":
+                            item = (x, y)
+                            break
+                    if item is None:
+                        item = SHOW_ALL_DEVICES
+                    log("choosing Show All Devices at %s" % (item,))
+                    screen.click(item[0], item[1])
                     time.sleep(6)
+
+                    # And verify the switch took effect: Show All Devices puts physical
+                    # disks in the sidebar, so at least one VirtIO device must now be
+                    # listed. If not, the click missed and the next pass tries again.
+                    after = words_of(screen, prefix, "afterview")
+                    after_text = joined(after)
+                    if "virtio" not in after_text and "virtlo" not in after_text:
+                        log("Show All Devices did not take effect; retrying")
+                        time.sleep(4)
+                        continue
+                    log("sidebar now lists physical devices")
                     erase_clicked = True
                     continue
                 # capacities identify them:
