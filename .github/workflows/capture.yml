@@ -9,10 +9,6 @@ name: capture
 on:
   workflow_dispatch:
     inputs:
-      macos_version:
-        description: "macOS version to install"
-        required: false
-        default: "15"
       minutes:
         description: "How long to capture"
         required: false
@@ -23,7 +19,28 @@ permissions:
   packages: read
 
 jobs:
+  # One job per version, all at once.
+  #
+  # Jobs without a `needs:` between them start together on separate runners - there is no
+  # queue and no ordering. Nothing is shared here either: each job downloads its own
+  # recovery image and boots its own guest, so 14, 15 and 26 can be photographed
+  # simultaneously instead of one after another.
+  #
+  # fail-fast is off on purpose: 26 may fail where 15 succeeds, and a failure there must
+  # not cancel the runs that would still produce useful frames.
   capture:
+    strategy:
+      fail-fast: false
+      matrix:
+        # A static list, not a split of the input string. GitHub's expression language
+        # has no split, and building one with format/replace/fromJSON is fragile in
+        # exactly the way this project has already been bitten by several times - it
+        # fails at matrix-expansion time with an unhelpful message, before any step runs.
+        # Comment a version out to leave it out.
+        version:
+          - "14"
+          - "15"
+          - "26"
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
@@ -58,7 +75,7 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/storage"
           sudo docker run -d --name cap \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
-            -e VERSION=${{ github.event.inputs.macos_version }} \
+            -e VERSION=${{ matrix.version }} \
             -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=Y \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
@@ -76,7 +93,7 @@ jobs:
         timeout-minutes: 180
         run: |
           set -ux
-          V="${{ github.event.inputs.macos_version }}"
+          V="${{ matrix.version }}"
           TOTAL=$(( ${{ github.event.inputs.minutes }} * 60 ))
           mkdir -p shots
           chmod 777 shots
@@ -155,7 +172,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: capture-${{ github.event.inputs.macos_version }}
+          name: capture-${{ matrix.version }}
           path: |
             shots/**
           if-no-files-found: warn
