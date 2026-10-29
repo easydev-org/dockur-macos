@@ -238,13 +238,18 @@ def main():
                     continue
 
                 # Show All Devices has been pressed, so the sidebar now holds physical
-                # disks as well as volumes. Select the row whose text says VirtIO and
-                # whose capacity is tens of gigabytes - the recovery image is read-only
-                # and 2.88 GB, OpenCore is 268 MB, and the target is the only large one.
+                # disks as well as volumes. Three entries appear, and their measured
+                # capacities identify them:
                 #
-                # The rows are read from the frame rather than assumed: after the switch
-                # the sidebar re-populates, so its layout is not the one in the earlier
-                # frame.
+                #   Capacity: Unknown    Child count: Not Supported   <- the target
+                #   Capacity: 268.4 MB   Child count: 1               <- OpenCore
+                #   Capacity: 3.22 GB    Child count: 1               <- recovery image
+                #
+                # The target does NOT report 64 GB. It has no partition table yet, so
+                # Disk Utility has nothing to total and says "Unknown" - which is why the
+                # earlier version, looking for "64", never found it and kept reporting
+                # "no row reported a large capacity". The absence of both a size and a
+                # child is what separates the unformatted disk from the two images.
                 rows = [(w[2], w[1], w[0]) for w in words
                         if "virtio" in w[0].lower() or "virtl" in w[0].lower()]
                 log("sidebar candidates: %s" % (rows,))
@@ -255,15 +260,16 @@ def main():
                     time.sleep(3)
                     probe = words_of(screen, prefix, "probe")
                     right = " ".join(w[0] for w in probe if w[1] > 900)
-                    log("row %s says: %s" % (label, right[:150]))
-                    # The target is the only device reporting tens of GB of capacity.
-                    if re.search(r"(6[0-9]|[1-9][0-9]{2})\.?\d*\s*(GB|TB)", right, re.I):
+                    low = right.lower()
+                    log("row %s says: %s" % (label, right[:160]))
+                    if "capacity: unknown" in low or "child count: not supported" in low:
                         target_row = (x_centre, y_centre)
-                        log("target disk is the row at (%d,%d)" % target_row)
+                        log("the unformatted target disk is the row at (%d,%d)"
+                            % target_row)
                         break
 
                 if target_row is None:
-                    log("no row reported a large capacity yet")
+                    log("no unformatted device in the sidebar yet")
                     time.sleep(5)
                     continue
 
