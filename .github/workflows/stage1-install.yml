@@ -77,23 +77,76 @@ jobs:
             macos-installer
           sudo docker images | head -5
 
-      # MANUAL=Y is the whole point: it leaves the recovery image unpatched, so the
-      # guest boots the real macOS installer and waits for a person - or for this
-      # driver - to click through it. MANUAL=N is what fails on 15 and 26.
-      - name: start the installer with MANUAL=Y
+      # MANUAL=Y leaves the recovery image unpatched, so the guest boots the real
+      # macOS installer and waits to be clicked through. MANUAL=N is the path that
+      # fails on 15 and 26, because its rc.cdrom.sh patch only matches 14.
+      #
+      # The container is ALSO what produces boot.img, macos.rom, macos.vars and the
+      # empty data.img - the four things qemu needs. But it must not be the thing
+      # that runs qemu for us: dockur puts its QMP socket somewhere inside its own
+      # filesystem, and the only bind mount is /storage, so the socket never appears
+      # on the host. That is what failed the first attempt - frames/ stayed empty
+      # for five minutes and the driver died on a missing socket.
+      #
+      # So: let dockur build the assets, stop it, then start qemu ourselves with the
+      # socket on the bind mount. Same pattern as deploy-macos-desktop.yml.
+      - name: let dockur prepare the boot assets
         run: |
           set -eux
-          mkdir -p "$GITHUB_WORKSPACE/storage" "$GITHUB_WORKSPACE/frames"
-          chmod 777 "$GITHUB_WORKSPACE/frames"
-          sudo docker run -d --name macinst \
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+          V="${{ github.event.inputs.macos_version }}"
+          mkdir -p "storage/$V" frames vm
+          chmod 777 frames
+
+          sudo docker rm -f assetsrc >/dev/null 2>&1 || true
+          sudo docker run -d --name assetsrc \
             --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
-            -e VERSION=${{ github.event.inputs.macos_version }} \
-            -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e VERSION="$V" -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
             -e MANUAL=Y \
             -v "$GITHUB_WORKSPACE/storage:/storage" \
             macos-installer
+
+          # boot.img, macos.rom and macos.vars appear within a minute or two. The
+          # disk is created empty (growable raw), which is what the installer wants.
+          for i in $(seq 1 60); do
+            sleep 10
+            if [ -s "storage/$V/boot.img" ] && [ -s "storage/$V/macos.rom" ] \
+               && [ -s "storage/$V/macos.vars" ] && [ -s "storage/$V/data.img" ]; then
+              echo "boot assets present after $((i*10))s"
+              break
+            fi
+            echo "[$((i*10))s] waiting for boot assets"
+          done
+          sudo docker logs --tail 30 assetsrc || true
+          sudo docker rm -f assetsrc || true
+          ls -la "storage/$V/"
+
+          cp -f "storage/$V/boot.img"   vm/boot.img
+          cp -f "storage/$V/macos.rom"  vm/macos.rom
+          cp -f "storage/$V/macos.vars" vm/macos.vars
+          cp --sparse=always "storage/$V/data.img" vm/data.img
+          ls -la vm/
+
+      # qemu runs here, with its QMP socket on the bind mount, so the driver can
+      # screenshot and click. This is the same qemu invocation deploy-macos-desktop
+      # uses, because the guest sees the same virtual hardware that way.
+      - name: start qemu with a host-visible QMP socket
+        run: |
+          set -eux
+          chmod +x scripts/drive-in-container.sh
+          sudo docker run -d --name macinst \
+            --device=/dev/kvm \
+            --entrypoint sh \
+            -v "$GITHUB_WORKSPACE/vm:/vm" \
+            -v "$GITHUB_WORKSPACE/frames:/frames" \
+            -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+            macos-installer /scripts/drive-in-container.sh
           sleep 30
           sudo docker logs --tail 40 macinst || true
+          ls -la frames/ || true
 
       - name: drive the installer to Setup Assistant
         timeout-minutes: ${{ fromJSON(github.event.inputs.install_timeout_min) }}
