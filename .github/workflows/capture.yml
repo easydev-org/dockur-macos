@@ -1,0 +1,159 @@
+name: capture
+
+# Take a screenshot every 30 seconds and keep them all.
+#
+# Nothing else. No clicking, no OCR, no decisions - this exists to produce a record of
+# what the guest actually shows over time, so a run can be understood afterwards instead
+# of inferred from a driver's log lines.
+
+on:
+  workflow_dispatch:
+    inputs:
+      macos_version:
+        description: "macOS version to install"
+        required: false
+        default: "15"
+      minutes:
+        description: "How long to capture"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  capture:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: tooling
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qemu-utils p7zip-full
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      "$AGENT_TOOLSDIRECTORY" || true
+          sudo docker image prune -af || true
+          df -h / | tail -1
+
+      - name: pull the launcher image
+        run: |
+          set -eux
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | sudo docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sudo docker pull ghcr.io/easydev-org/dockur-macos-launcher:14
+          sudo docker tag ghcr.io/easydev-org/dockur-macos-launcher:14 macos-cap
+
+      # MANUAL=Y: the container prepares the recovery image, the disk and the OpenCore
+      # assets, then boots Apple's installer. That is the state worth photographing.
+      - name: start the guest
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/storage"
+          sudo docker run -d --name cap \
+            --device=/dev/kvm --device=/dev/net/tun --cap-add NET_ADMIN \
+            -e VERSION=${{ github.event.inputs.macos_version }} \
+            -e DISK_SIZE=64G -e RAM_SIZE=8G -e CPU_CORES=4 \
+            -e MANUAL=Y \
+            -v "$GITHUB_WORKSPACE/storage:/storage" \
+            -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
+            macos-cap
+          sleep 30
+          sudo docker logs --tail 30 cap || true
+
+      # dockur's qemu has its own monitor at /run/shm/monitor.sock inside the container.
+      # HMP speaks plain text, which is all screendump needs - no JSON, no handshake, so
+      # none of the QMP plumbing this project spent so long on is involved.
+      #
+      # The loop runs on the runner and reaches into the container with docker exec.
+      - name: capture a frame every 30 seconds
+        timeout-minutes: 180
+        run: |
+          set -ux
+          V="${{ github.event.inputs.macos_version }}"
+          TOTAL=$(( ${{ github.event.inputs.minutes }} * 60 ))
+          mkdir -p shots
+          chmod 777 shots
+
+          # Wait for the monitor socket before the first frame; before it exists there is
+          # simply nothing to photograph.
+          for i in $(seq 1 120); do
+            if sudo docker exec cap sh -c '[ -S /run/shm/monitor.sock ]' 2>/dev/null; then
+              echo "monitor socket up after $((i*5))s"
+              break
+            fi
+            sleep 5
+          done
+
+          elapsed=0
+          n=0
+          while [ "$elapsed" -lt "$TOTAL" ]; do
+            n=$((n + 1))
+            name=$(printf 'shot-%03d-t%04ds' "$n" "$elapsed")
+
+            # screendump writes inside the container; read it back out immediately,
+            # because /tmp there disappears with the container.
+            sudo docker exec cap python3 /scripts/shot.py "/tmp/$name.ppm" \
+              >/dev/null 2>&1 || echo "$name: monitor write failed"
+
+            sleep 2
+            sudo docker cp "cap:/tmp/$name.ppm" "shots/$name.ppm" 2>/dev/null || \
+              echo "$name: nothing captured"
+
+            # Record what the container is doing at this moment as well: when the guest is
+            # on a black screen, the log is the only thing that says why.
+            sudo docker logs --tail 3 cap >>"shots/$name.log" 2>&1 || true
+
+            sleep 28
+            elapsed=$((elapsed + 30))
+          done
+
+          ls shots | head -5
+          ls shots | wc -l
+
+      # PPM is uncompressed at 6 MB a frame. Converting to PNG makes the artifact a few
+      # hundred KB and readable without special tooling.
+      - name: convert to png
+        if: always()
+        run: |
+          set -ux
+          sudo apt-get install -y -qq imagemagick || true
+          for f in shots/*.ppm; do
+            [ -s "$f" ] || continue
+            convert "$f" "${f%.ppm}.png" 2>/dev/null || \
+              python3 scripts/ppm2png.py "$f" "${f%.ppm}.png" || true
+          done
+          ls -la shots | head -10
+
+      - name: keep every frame
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-${{ github.event.inputs.macos_version }}
+          path: |
+            shots/**
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 0
+
+      - name: stop
+        if: always()
+        run: |
+          sudo docker logs cap > shots-container.log 2>&1 || true
+          tail -40 shots-container.log || true
+          sudo docker rm -f cap >/dev/null 2>&1 || true
+
+      - name: keep the container log too
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-log
+          path: shots-container.log
+          if-no-files-found: warn
+          retention-days: 14
