@@ -173,7 +173,7 @@ def main():
     erased = False
     erase_clicked = False
     target_disk = None
-    probed = 0
+    disk_probe = 0
     for step in range(1, 140):
         png = screen.grab("%s-s%02d" % (prefix, step))
         words = screen.text(png)
@@ -221,28 +221,43 @@ def main():
                 # row - the volume's capacity. So each VirtIO row is clicked in turn and
                 # read: the 64 GB disk is the one whose capacity contains "64".
                 if target_disk is None:
-                    virtio = sorted([(w[2], w[1]) for w in words
-                                     if "virtio" in w[0].lower() and w[1] < 900])
-                    if not virtio:
-                        log("no VirtIO row in the sidebar yet")
-                        continue
-                    if probed < len(virtio):
-                        vy, vx = virtio[probed]
-                        probed = probed + 1
-                        log("probing VirtIO row %d at (%d,%d)" % (probed - 1, vx, vy))
-                        screen.click(vx + 120, vy)
+                    # The sidebar rows cannot be found by OCR. A frame shows
+                    #
+                    #   Internal                        y~318
+                    #   Apple Inc. VirtIO Block Media   y~340
+                    #   Apple Inc. VirtIO Block Media   y~363
+                    #   disk2s1                         y~389  (selected by default)
+                    #
+                    # with the sidebar spanning x 410-666 - but tesseract returns none
+                    # of those words at any psm setting tried, only the right pane's
+                    # "physical volume" text. They are small, low-contrast and on a dark
+                    # background, and it discards them as noise.
+                    #
+                    # So the rows are addressed by POSITION, and the choice between them
+                    # is made the way a person would: click one, look at what the pane
+                    # says its capacity is, and keep the one that reports 64 GB. That
+                    # reading comes from the large text on the right, which OCR does
+                    # return.
+                    ROWS_Y = (340, 363, 389)
+                    SIDEBAR_X = 540
+                    if disk_probe < len(ROWS_Y):
+                        ry = ROWS_Y[disk_probe]
+                        disk_probe = disk_probe + 1
+                        log("probing sidebar row %d at (%d,%d)" % (disk_probe - 1, SIDEBAR_X, ry))
+                        screen.click(SIDEBAR_X, ry)
                         time.sleep(3)
-                        after = screen.text(screen.grab("%s-probe%d" % (prefix, probed)))
-                        right = [w[0] for w in after if w[1] > 900]
-                        log("right panel says: %s" % " ".join(right)[:180])
-                        if any("64" in w for w in right):
-                            target_disk = (vx, vy)
-                            log("the 64 GB disk is row %d at (%d,%d)" % (probed - 1, vx, vy))
+                        after = screen.text(screen.grab("%s-probe%d" % (prefix, disk_probe)))
+                        right = " ".join(w[0] for w in after if w[1] > 900)
+                        log("right panel says: %s" % right[:180])
+                        if "64" in right:
+                            target_disk = (SIDEBAR_X, ry)
+                            log("the 64 GB disk is row %d at y=%d" % (disk_probe - 1, ry))
                         continue
-                    # No capacity readable at all: fall back to the first row, which is
-                    # the disk rather than the mounted volume.
-                    target_disk = (virtio[0][1], virtio[0][0])
-                    log("capacities unreadable; using the first row %s" % (target_disk,))
+                    if target_disk is None:
+                        # Nothing reported 64 GB. Take the first VirtIO row rather than
+                        # the selected one: the selected one is the recovery volume.
+                        target_disk = (SIDEBAR_X, ROWS_Y[0])
+                        log("no capacity said 64; defaulting to the first row %s" % (target_disk,))
                     continue
 
                 # The target is known. Select it, then press the Erase control, whose
