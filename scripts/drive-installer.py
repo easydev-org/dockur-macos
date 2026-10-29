@@ -374,11 +374,21 @@ def main():
                 # version looked for format/scheme/cancel/name instead, none of which
                 # appear in the title, so a sheet that had opened perfectly was reported
                 # as "sheet open: False" - and the press was repeated, closing it again.
-                # A quoted word straight after "erase" is the giveaway.
-                sheet_open = ("format" in after_text or "scheme" in after_text
-                              or "cancel" in after_text
+                # The sheet's own body is the giveaway. It reads:
+                #
+                #   Erase "Apple Inc. VirtIO Block Media"?
+                #   Erasing this disk will delete all data on it...
+                #
+                # 'will be deleted' survives OCR reliably and appears nowhere else on this
+                # screen. Do not test for the quoted name: tesseract renders the quotes as
+                # the curly “ and ”, not ASCII, which is why an earlier version that
+                # looked for 'erase "' reported a perfectly open sheet as closed and then
+                # closed it with a second press.
+                sheet_open = ("will be deleted" in after_text
+                              or "format" in after_text
+                              or "scheme" in after_text
                               or "partition map" in after_text
-                              or 'erase "' in after_text)
+                              or "cancel" in after_text)
                 log("erase sheet open: %s" % sheet_open)
                 if not sheet_open:
                     # Do NOT go back to the View menu. The target is already selected -
