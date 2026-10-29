@@ -73,7 +73,7 @@ def main():
     du = None
     for word, x, y, w, _h in words:
         if word.strip().lower().startswith("disk") and 480 < y < 560:
-            du = (x + w // 2, y)
+            du = (x, y)
             break
     if du is None:
         log("Disk Utility row not found: %s" % " ".join(w[0] for w in words)[:200])
@@ -90,7 +90,7 @@ def main():
     view_btn = None
     for word, x, y, w, _h in words:
         if word.strip().lower() in ("iew", "iow", "view", "vigw") and 300 < y < 380:
-            view_btn = (x + w // 2, y)
+            view_btn = (x, y)
             break
     log("View button: %s" % (view_btn,))
     if view_btn is not None:

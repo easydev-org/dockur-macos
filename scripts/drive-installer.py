@@ -148,7 +148,7 @@ def row(words, index, *needles):
             continue
         if best is None or abs(y - y_expected) < abs(best[1] - y_expected):
             # Click near the middle of the label, not on its first glyph.
-            best = (x + w // 2, y)
+            best = (x, y)
     return best
 
 
@@ -201,6 +201,7 @@ def main():
     installing = False
     in_view_menu = False
     erase_clicked = False
+    erase_attempts = 0
 
     for step in range(1, 200):
         words = words_of(screen, prefix, "s%02d" % step)
@@ -255,7 +256,7 @@ def main():
                     for word, x, y, w, _h in words:
                         low = word.strip().lower()
                         if low in ("iew", "iow", "view", "vigw", "lew") and 300 < y < 380:
-                            view_btn = (x + w // 2, y)
+                            view_btn = (x, y)
                             break
                     if view_btn is None:
                         # Fallback: the toolbar's own geometry. Volume is at x=1101, so
@@ -341,7 +342,7 @@ def main():
                 erase_btn = None
                 for word, x, y, w, _h in words:
                     if word.strip().lower().startswith("era") and 300 < y < 380:
-                        erase_btn = (x + w // 2, y)
+                        erase_btn = (x, y)
                         break
                 if erase_btn is None:
                     erase_btn = ERASE_BUTTON
@@ -362,12 +363,20 @@ def main():
                 # happened before: erase_clicked was set, the toolbar Erase was pressed on
                 # each pass, and the loop could not tell a failed open from a slow one.
                 sheet_open = ("format" in after_text or "scheme" in after_text
-                              or "name:" in after_text or "cancel" in after_text)
+                              or "name" in after_text or "cancel" in after_text
+                              or "erase" in after_text.replace("disk utility", ""))
                 log("erase sheet open: %s" % sheet_open)
                 if not sheet_open:
-                    # Selection probably did not stick. Re-run the selection step.
-                    erase_clicked = False
-                    time.sleep(4)
+                    # Do NOT go back to the View menu. The target is already selected -
+                    # the pane says Uninitialized/disk0 - and re-running the selection
+                    # re-opened Show All Devices, which is how this looped. Retry only the
+                    # Erase press, and give the sheet longer to appear: the first attempt
+                    # looked at the frame four seconds after the click.
+                    erase_attempts += 1
+                    if erase_attempts > 8:
+                        log("Erase produced no sheet after %d attempts" % erase_attempts)
+                        erase_attempts = 0
+                    time.sleep(6)
                     continue
                 time.sleep(6)
                 continue
@@ -377,7 +386,7 @@ def main():
             # what an install target needs. Its own Erase button is the one that commits,
             # and it is the LOWEST such control on screen because the toolbar's Erase is
             # at y=332 while the sheet's is near its bottom edge.
-            cands = [(w[2], w[1] + w[3] // 2) for w in words
+            cands = [(w[2], w[1]) for w in words
                      if w[0].strip().lower().startswith("era")]
             if cands:
                 y_low, x_low = max(cands)
