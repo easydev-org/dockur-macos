@@ -189,7 +189,22 @@ def main():
         # "first ald" in every frame of this pane, so that test never fired and the
         # driver stayed on the recovery menu for a hundred steps. The window title and
         # its Erase control both read reliably instead.
-        in_disk_utility = ("disk utility" in joined and "erase" in joined)                           or "first ald" in joined or "physical volume" in joined
+        # Detect Disk Utility by its TOOLBAR, not by words that also appear on the
+        # recovery menu. That menu lists an entry reading
+        #
+        #   Disk Utility - Repair or erase a disk using Disk Utility
+        #
+        # so "disk utility" AND "erase" are both present before the tool is opened -
+        # the test was true on the menu itself, the driver entered its disk branch, and
+        # looked for a VirtIO row that only exists inside the tool. Twenty-odd steps of
+        # "no VirtIO row in the sidebar yet" with the menu on screen.
+        #
+        # The toolbar has Volume, Partition, First Aid, Restore and Unmount. None of
+        # those words appear anywhere on the recovery menu, and three of them together
+        # cannot be a coincidence.
+        toolbar = sum(1 for w in joined.split() if w in
+                      ("volume", "partition", "restore", "unmount", "first", "ald"))
+        in_disk_utility = toolbar >= 3 or "physical volume" in joined
 
         if in_disk_utility:
             if not erased:
