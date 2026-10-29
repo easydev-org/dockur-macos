@@ -407,28 +407,18 @@ def main():
                         erase_attempts = 0
                     time.sleep(6)
                     continue
-                time.sleep(6)
+                # The sheet is modal: it covers the sidebar, so returning to the top of the
+                # loop would land in the selection branch, find no rows behind the sheet,
+                # and spin. Confirm it here, on the frame that proved it is open.
+                #
+                # Nothing in it needs changing - Name is Untitled, Format is APFS and
+                # Scheme is GUID Partition Map, which is exactly what an install target
+                # needs - so this is the only click that matters.
+                log("confirming the erase sheet at %s" % (ERASE_CONFIRM,))
+                screen.click(ERASE_CONFIRM[0], ERASE_CONFIRM[1])
+                time.sleep(35)
+                erased = True
                 continue
-
-            # The erase sheet, measured from a real frame:
-            #
-            #   Erase "Apple Inc. VirtIO Block Media"?
-            #   Name:    [Untitled]              (862,518)-(1119,539)
-            #   Format:  [APFS]                  (862,541)-(1119,561)
-            #   Scheme:  [GUID Partition Map]    (862,564)-(1119,585)
-            #            [Cancel] (1066,639)  [Erase] (1146,639)
-            #
-            # Nothing needs changing. Format already reads APFS and Scheme already reads
-            # GUID Partition Map - the defaults are exactly what an install target needs -
-            # and the volume name does not matter to the installer, so "Untitled" is
-            # fine. The sheet only has to be confirmed.
-            #
-            # Confirming is by position, because the toolbar's Erase (y=332) and the
-            # sheet's (y=639) share a label and only the sheet's commits.
-            log("confirming the erase sheet at %s" % (ERASE_CONFIRM,))
-            screen.click(ERASE_CONFIRM[0], ERASE_CONFIRM[1])
-            time.sleep(35)
-            erased = True
             continue
 
         # Erased, and Disk Utility is still on screen. It has no close button in
