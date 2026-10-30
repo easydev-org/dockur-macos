@@ -841,9 +841,28 @@ def main():
                     time.sleep(1)
                 for ch in WANTED_COUNTRY[0].lower():
                     screen.key("spc" if ch == " " else ch)
-                    time.sleep(0.15)
+                    # 0.15s dropped characters on 26: the list came to rest on T
+                    # (Tunisia, Turkmenistan) after typing 'United States', which is what
+                    # a partially received string looks like in this widget.
+                    time.sleep(0.3)
                 time.sleep(2)
-                # Down commits the selection to the row the typing matched.
+                # Check where the list actually landed before committing to a row.
+                landed = signature_from(screen, prefix, step)
+                log("step %d: list after typing -> %s" % (step, landed))
+                want = WANTED_COUNTRY[0].split()[0].lower()[:4]
+                if landed is None or want not in (landed or "").lower():
+                    # The jump missed. Page down until the first letters appear, which
+                    # is how this list is meant to be traversed by hand.
+                    for _ in range(24):
+                        screen.key("pgdn")
+                        time.sleep(1.2)
+                        seen = (signature_from(screen, prefix, step) or "").lower()
+                        if want in seen:
+                            log("step %d: list reached %r by paging" % (step, want))
+                            break
+                    else:
+                        log("step %d: paging never reached %r" % (step, want))
+                # Down commits the selection to the matched row.
                 screen.key("down")
                 time.sleep(2)
                 main.country_phase = "click"
@@ -871,7 +890,19 @@ def main():
                 pick = rows[len(rows) // 2]
                 log("step %d: Continue not enabled; clicking row %r at %s"
                     % (step, pick[1], pick[0]))
+                # DOUBLE CLICK, then Return.
+                #
+                # A single click on 26's list selects nothing: the log below shows the
+                # row clicked, the pane unchanged, and Continue still grey, four times
+                # over. A double click is what commits a row in this list widget, and
+                # Return is the editable-list default that 26 also honours. Sending both
+                # costs one extra event and covers both behaviours - the single click
+                # first, since 15 does select on one.
                 screen.click(pick[0][0], pick[0][1])
+                time.sleep(1)
+                screen.click(pick[0][0], pick[0][1])
+                time.sleep(1)
+                screen.key("ret")
                 time.sleep(3)
                 # Re-read: the row click enables the button, and its position is fixed.
                 again = signature_from(screen, prefix, step)
