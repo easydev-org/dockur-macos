@@ -100,6 +100,11 @@ LICENSE_DISAGREE = (880, 527)
 
 # The installer's disk list, after the erase. The entry is the volume eraseDisk created;
 # 'Untitled' is its default name and 68.51 GB its size.
+# View menu's second item, measured when the menu is open:
+#   Show Only Volumes    (354,  41)
+#   Show All Devices     (345,  63)
+SHOW_ALL_DEVICES = (345, 63)
+
 INSTALLER_DISK = (865, 621)
 INSTALLER_CONTINUE = (1005, 712)
 
@@ -175,22 +180,53 @@ def main():
             device_rows.append((x, y))
 
     if not device_rows:
-        # Show All Devices, only now and only because it is the difference between a
-        # sidebar with disks in it and one without.
-        log("no device rows in the sidebar; trying Show All Devices")
-        for word, x, y, _w, _h in screen.text(screen.grab("%s-02-tb" % prefix)):
-            if word.strip().lower().startswith("view") and 250 < y < 380:
-                screen.click(x, y)
+        # Show All Devices, needed because this boot came up listing only disk1s1 - one
+        # volume, 2.88 GB, no physical disks. Earlier runs of the same script did have the
+        # device rows, so the view mode differs between boots and cannot be assumed.
+        #
+        # Retried up to four times because a single click frequently misses: the View
+        # button's label is drawn at y=293 in one frame and y=334 in another, and a click
+        # that misses leaves the menu closed with no other sign.
+        for attempt in range(1, 5):
+            words_now = screen.text(screen.grab("%s-02-vtry%d" % (prefix, attempt)))
+            view_pt = None
+            for word, x, y, _w, _h in words_now:
+                low = word.strip().lower()
+                if (low == "view" or low.endswith("iew") or low.endswith("iow"))                         and 250 < y < 380:
+                    view_pt = (x, y)
+                    break
+            if view_pt is None:
+                log("attempt %d: View button not found" % attempt)
                 time.sleep(3)
-                menu = " ".join(w[0] for w in screen.text(screen.grab("%s-02-vm" % prefix))).lower()
-                log("View menu: %s" % menu[:120])
-                for mword, mx, my, _mw, _mh in screen.text(screen.grab("%s-02-vm2" % prefix)):
-                    if mword.strip().lower() == "all":
-                        screen.click(mx, my)
-                        time.sleep(6)
-                        break
-                break
-        for word, x, y, _w, _h in screen.text(screen.grab("%s-02-sidebar2" % prefix)):
+                continue
+            log("attempt %d: clicking View at (%d,%d)" % (attempt, view_pt[0], view_pt[1]))
+            screen.click(*view_pt)
+            time.sleep(3)
+
+            menu_words = screen.text(screen.grab("%s-02-vmenu%d" % (prefix, attempt)))
+            menu = " ".join(w[0] for w in menu_words).lower()
+            if "all" not in menu and "devices" not in menu:
+                log("attempt %d: no menu; %s" % (attempt, menu[:110]))
+                screen.key("esc")
+                time.sleep(2)
+                continue
+
+            all_pt = None
+            for word, x, y, _w, _h in menu_words:
+                if word.strip().lower() == "all":
+                    all_pt = (x, y)
+                    break
+            if all_pt is None:
+                all_pt = SHOW_ALL_DEVICES
+            log("attempt %d: choosing Show All Devices at %s" % (attempt, all_pt))
+            screen.click(*all_pt)
+            time.sleep(6)
+            break
+
+        # Re-read the list, and this time accept ANY row that is not the volume: after
+        # Show All Devices the physical disks appear as their own entries.
+        words_now = screen.text(screen.grab("%s-02-sidebar2" % prefix))
+        for word, x, y, _w, _h in words_now:
             low = word.strip().lower()
             if x < 700 and ("virt" in low or "block" in low or "media" in low):
                 device_rows.append((x, y))
