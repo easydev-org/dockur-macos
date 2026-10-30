@@ -68,7 +68,6 @@ RECOVERY_DISK_UTILITY = (849, 513)
 RECOVERY_REINSTALL = (861, 329)
 RECOVERY_CONTINUE = (1142, 588)
 
-ERASE_TAB = (1290, 306)          # above the label; the label itself (y=336) does nothing
 
 SIDEBAR_TARGET = (540, 374)      # first device row = the 64 GiB unformatted disk
 SIDEBAR_OTHERS = ((540, 402), (540, 430))
@@ -262,16 +261,29 @@ def main():
     # shows the label at y=332, another at y=294 - so a constant is wrong by up to 38px,
     # which is the whole height of the control.
     #
-    # So the label is located in the frame and the click goes 26px above it, which is the
-    # offset that worked: label 332 -> press 306.
-    erase_pt = ERASE_TAB
+    # So the label is located in the frame and the click goes 26px above it.
+    #
+    # Measured across releases, and the reason this must not be a constant:
+    #
+    #   14  Erase label (1290,294)   -> press (1290,268)
+    #   15  Erase label (1290,294)   -> press (1290,268)
+    #   26  Erase label (1308,314)   -> press (1308,288)    18px right, 20px down
+    #
+    # NO FALLBACK. If the label is not on the frame the press is not attempted, because a
+    # guessed point either hits nothing (the run then reports a false 'no erase sheet' and
+    # retries forever) or hits a neighbouring control (Restore sits 32px to the right).
+    # A wrong press here is worse than a stopped run: it can act on the wrong thing.
+    erase_pt = None
     for word, x, y, _w, _h in screen.text(screen.grab("%s-03-toolbar" % prefix)):
-        if word.strip().lower().startswith("era") and 250 < y < 380:
+        if word.strip().lower().startswith("era") and 250 < y < 400:
             erase_pt = (x, y - 26)
             log("Erase label at (%d,%d); pressing its tab at %s" % (x, y, erase_pt))
             break
-    else:
-        log("Erase label not found; using %s" % (erase_pt,))
+    if erase_pt is None:
+        log("FATAL: no Erase label on this frame - refusing to press a guessed point")
+        log("A blind press would either do nothing or hit Partition/Restore next to it.")
+        screen.close()
+        return 1
     log("pressing Erase at %s" % (erase_pt,))
     screen.click(*erase_pt)
     time.sleep(8)
