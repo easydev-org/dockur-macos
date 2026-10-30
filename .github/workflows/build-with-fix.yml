@@ -37,6 +37,8 @@ permissions:
   # installer step into. Without it the action answers 403 "Resource not accessible by
   # integration" and, correctly, carries on without streaming rather than failing.
   checks: write
+  # actions: write is needed to re-dispatch this workflow from inside it.
+  actions: write
 
 jobs:
   build:
@@ -313,18 +315,35 @@ jobs:
             sudo chown -R "$(id -u):$(id -g)" frames || true
             docker rm -f macinst >/dev/null 2>&1 || true
             echo "=== installer log ==="
-            tail -80 frames/stage1-installer.log 2>/dev/null || true
+            tail -100 frames/stage1-coords.log 2>/dev/null || true
 
       - name: did the manual install reach Setup Assistant
         if: github.event.inputs.manual_install == 'true'
         run: |
           set -eux
-          if grep -q "SETUP ASSISTANT REACHED" frames/stage1-installer.log 2>/dev/null; then
+          LOG=frames/stage1-coords.log
+          if grep -q "SETUP ASSISTANT REACHED" "$LOG" 2>/dev/null; then
             echo "reached Setup Assistant"
-          else
-            echo "::error::the installer did not reach Setup Assistant; see the frames artifact"
+            exit 0
+          fi
+          # An unattached install disk is a property of the boot, not of the driver: the
+          # sidebar comes up holding only the recovery volume and there is no row to
+          # select. That is worth one automatic rerun before failing the job, since a
+          # fresh guest usually has its disk.
+          if grep -q "did not attach the install target" "$LOG" 2>/dev/null; then
+            echo "::warning::the guest booted without its install disk; asking for one rerun"
+            if [ "${{ github.run_attempt }}" = "1" ]; then
+              gh workflow run build-with-fix.yml \
+                --repo "${{ github.repository }}" \
+                -f run_bake=true \
+                -f macos_version=${{ github.event.inputs.macos_version }} \
+                -f manual_install=true || true
+            fi
+            echo "::error::rerun requested; see the frames artifact for this attempt"
             exit 1
           fi
+          echo "::error::the installer did not reach Setup Assistant; see the frames artifact"
+          exit 1
 
       - name: upload the installer frames
         if: always() && github.event.inputs.manual_install == 'true'
