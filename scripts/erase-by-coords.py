@@ -290,28 +290,25 @@ def main():
     #
     # with the disk correctly selected and the button plainly on screen.
     tb_ppm = screen.grab("%s-03-toolbar" % prefix)
-    # The band covers the label row across all three releases. Measured label y:
+    # The toolbar is found on the WHOLE frame at psm 11 - no crop, no version table.
     #
-    #   14  Erase y=294-302
-    #   15  Erase y=332
-    #   26  Erase y=314
+    # The label row moves a lot: 294 on 14, 332 on 15, and 26 gave 314 on one boot and 355
+    # on the next. Five crop ranges were tried against four captured frames and none
+    # covered all of them (285-345 missed 26 at 355; 250-400 covered 26 but lost 14 and 15).
+    # A whole-frame pass at psm 11 finds it in all four:
     #
-    # A 38px spread. Crops tried against all three frames: 285-345 reads cleanly on every
-    # one; 300-350 clips 14, 295-350 loses 14 entirely, 285-350 and 280-350 pick up
-    # trailing noise.
+    #   14      x=1276-1304  y=294-302  conf=96
+    #   15      x=1276-1304  y=332-340  conf=96
+    #   26      x=1294-1322  y=314-322  conf=84
+    #   26      x=1294-1322  y=355-363  conf=96
     #
-    # Widening upward to include the icons breaks
-    # OCR outright on 26, where the icons sit at y=268-272 and the labels at y=314: with
-    # the range starting at 255 the frame came back empty, while 300-350 reads
-    #   Volume First Aid Partition Erase Restore Mount Info
-    # on all three releases. Measured: 15 labels at y=332, 26 labels at y=314.
-    tb_crop = _crop_ppm(tb_ppm, tb_ppm.replace(".ppm", "-band.ppm"), (1000, 285, 1550, 345))
+    # which is what sparse-text mode is for: it keeps isolated words that the default
+    # page-segmentation discards as noise, and the toolbar is nothing but isolated words.
     erase_pt = None
-    for word, x, y, _w, _h in (_read_words(tb_crop, psm="6") if tb_crop else []):
-        if word.strip().lower().startswith("era"):
-            erase_pt = (1000 + x, 285 + y - 26)
-            log("Erase label at (%d,%d); pressing its tab at %s"
-                % (1000 + x, 285 + y, erase_pt))
+    for word, x, y, _w, _h in _read_words(tb_ppm, psm="11", min_conf=30):
+        if word.strip().lower().startswith("era") and 250 < y < 420:
+            erase_pt = (x, y - 26)
+            log("Erase label at (%d,%d); pressing its tab at %s" % (x, y, erase_pt))
             break
     if erase_pt is None:
         log("FATAL: no Erase label on this frame - refusing to press a guessed point")
