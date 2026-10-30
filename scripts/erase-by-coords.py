@@ -100,11 +100,6 @@ LICENSE_DISAGREE = (880, 527)
 
 # The installer's disk list, after the erase. The entry is the volume eraseDisk created;
 # 'Untitled' is its default name and 68.51 GB its size.
-# View menu's second item, measured when the menu is open:
-#   Show Only Volumes    (354,  41)
-#   Show All Devices     (345,  63)
-SHOW_ALL_DEVICES = (345, 63)
-
 INSTALLER_DISK = (865, 621)
 INSTALLER_CONTINUE = (1005, 712)
 
@@ -179,57 +174,22 @@ def main():
         if heading_seen and x < 700 and ("virt" in low or "block" in low or "media" in low):
             device_rows.append((x, y))
 
+    # NO VIEW CLICK. When the sidebar holds only the recovery volume, the guest did not
+    # get its install disk - the volume name differs between boots (disk1s1 on one,
+    # disk2s1 on another), which is an enumeration difference, not a UI one. Show All
+    # Devices does not fix that: the device rows either exist under the default view or
+    # the disk is not there at all.
+    #
+    # So this is a stop condition, not something to work around. The job fails, and the
+    # next run boots a guest that has its disk.
     if not device_rows:
-        # Show All Devices, needed because this boot came up listing only disk1s1 - one
-        # volume, 2.88 GB, no physical disks. Earlier runs of the same script did have the
-        # device rows, so the view mode differs between boots and cannot be assumed.
-        #
-        # Retried up to four times because a single click frequently misses: the View
-        # button's label is drawn at y=293 in one frame and y=334 in another, and a click
-        # that misses leaves the menu closed with no other sign.
-        for attempt in range(1, 5):
-            words_now = screen.text(screen.grab("%s-02-vtry%d" % (prefix, attempt)))
-            view_pt = None
-            for word, x, y, _w, _h in words_now:
-                low = word.strip().lower()
-                if (low == "view" or low.endswith("iew") or low.endswith("iow"))                         and 250 < y < 380:
-                    view_pt = (x, y)
-                    break
-            if view_pt is None:
-                log("attempt %d: View button not found" % attempt)
-                time.sleep(3)
-                continue
-            log("attempt %d: clicking View at (%d,%d)" % (attempt, view_pt[0], view_pt[1]))
-            screen.click(*view_pt)
-            time.sleep(3)
-
-            menu_words = screen.text(screen.grab("%s-02-vmenu%d" % (prefix, attempt)))
-            menu = " ".join(w[0] for w in menu_words).lower()
-            if "all" not in menu and "devices" not in menu:
-                log("attempt %d: no menu; %s" % (attempt, menu[:110]))
-                screen.key("esc")
-                time.sleep(2)
-                continue
-
-            all_pt = None
-            for word, x, y, _w, _h in menu_words:
-                if word.strip().lower() == "all":
-                    all_pt = (x, y)
-                    break
-            if all_pt is None:
-                all_pt = SHOW_ALL_DEVICES
-            log("attempt %d: choosing Show All Devices at %s" % (attempt, all_pt))
-            screen.click(*all_pt)
-            time.sleep(6)
-            break
-
-        # Re-read the list, and this time accept ANY row that is not the volume: after
-        # Show All Devices the physical disks appear as their own entries.
-        words_now = screen.text(screen.grab("%s-02-sidebar2" % prefix))
-        for word, x, y, _w, _h in words_now:
-            low = word.strip().lower()
-            if x < 700 and ("virt" in low or "block" in low or "media" in low):
-                device_rows.append((x, y))
+        log("FATAL: the sidebar lists no physical disk - only the recovery volume,")
+        log("so this guest did not attach the install target. The volume name")
+        log("differs between boots (disk1s1 vs disk2s1), which is an enumeration")
+        log("difference, not a UI one - Show All Devices cannot conjure a disk that")
+        log("is not attached. Failing here rather than guessing; rerun.")
+        screen.close()
+        return 1
 
     log("device rows in the sidebar: %s" % (device_rows,))
     if not device_rows:
