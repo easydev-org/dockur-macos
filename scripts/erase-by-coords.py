@@ -148,36 +148,87 @@ def main():
     time.sleep(20)
     screen.grab("%s-01-du" % prefix)
 
-    # 2. Select the target. No View, no Show All Devices: the devices are in the sidebar
-    #    under the default view, at fixed heights.
-    log("selecting the target device at %s" % (SIDEBAR_TARGET,))
-    screen.click(*SIDEBAR_TARGET)
+    # 2. Select the target. No View, no Show All Devices - the physical disks are listed
+    #    in the default view.
+    #
+    #    The rows are located in the frame rather than assumed at a fixed height: one
+    #    capture puts 'Internal' at y=313 with its first device at y=336, another at y=350
+    #    and y=374. A constant misses the sidebar entirely on the first of those, which is
+    #    how a whole run managed to erase nothing while reporting success.
+    #
+    #    The first device row under the heading is the 64 GiB target - the recovery image
+    #    and the OpenCore disk sort after it.
+    target_pt = SIDEBAR_TARGET
+    for word, x, y, _w, _h in screen.text(screen.grab("%s-02-sidebar" % prefix)):
+        if "virt" in word.strip().lower() and x < 700:
+            target_pt = (x, y)
+            log("sidebar device row at (%d,%d)" % (x, y))
+            break
+    else:
+        log("no device row found; using %s" % (target_pt,))
+    log("selecting the target device at %s" % (target_pt,))
+    screen.click(*target_pt)
     time.sleep(4)
     screen.grab("%s-02-selected" % prefix)
 
     # 3. Erase, and confirm. Both presses are single attempts now - if the sheet does not
     #    appear the run continues to the log rather than looping, because the previous
     #    retry logic is what kept dismissing it.
-    log("pressing Erase at %s" % (ERASE_TAB,))
-    screen.click(*ERASE_TAB)
+    # The Erase tab is drawn icon-over-label, and only the icon responds: clicking the
+    # label's own text does nothing. Its height is not fixed between frames - one capture
+    # shows the label at y=332, another at y=294 - so a constant is wrong by up to 38px,
+    # which is the whole height of the control.
+    #
+    # So the label is located in the frame and the click goes 26px above it, which is the
+    # offset that worked: label 332 -> press 306.
+    erase_pt = ERASE_TAB
+    for word, x, y, _w, _h in screen.text(screen.grab("%s-03-toolbar" % prefix)):
+        if word.strip().lower().startswith("era") and 250 < y < 380:
+            erase_pt = (x, y - 26)
+            log("Erase label at (%d,%d); pressing its tab at %s" % (x, y, erase_pt))
+            break
+    else:
+        log("Erase label not found; using %s" % (erase_pt,))
+    log("pressing Erase at %s" % (erase_pt,))
+    screen.click(*erase_pt)
     time.sleep(8)
     screen.grab("%s-03-sheet" % prefix)
-
-    log("confirming the erase at %s" % (SHEET_ERASE,))
-    screen.click(*SHEET_ERASE)
-    time.sleep(10)
 
     # WAIT FOR THE ERASE TO FINISH. The frame right after the click reads
     # 'erasing "apple inc. virtlo block media"' - it is progress, not completion, and a
     # 64 GiB erase takes minutes. Sending the quit while that is still running left the
     # guest inside Disk Utility for the whole remaining run: the reinstall clicks landed
     # on nothing and eighty Returns changed nothing.
+    # The sheet has to appear first. Without this check a missed Erase press looked
+    # identical to a completed one: no 'erasing' text on screen meant 'already finished',
+    # so the run moved on with the disk untouched - and the installer then showed an empty
+    # disk list, which is exactly what happened.
+    sheet_seen = False
+    for wait in range(1, 20):
+        grab = screen.grab("%s-04-sheet-wait%02d" % (prefix, wait))
+        text = " ".join(w[0] for w in screen.text(grab)).lower()
+        log("sheet wait %d: %s" % (wait, text[:120] or "(nothing)"))
+        if "will be deleted" in text or "erase" in text and "untitled" in text:
+            sheet_seen = True
+            break
+        if wait >= 3:
+            log("Erase produced no sheet - pressing it again")
+            screen.click(*erase_pt)
+        time.sleep(5)
+    if not sheet_seen:
+        log("WARNING: no erase sheet appeared; the disk was NOT erased")
+    screen.grab("%s-04-sheet" % prefix)
+
+    log("confirming the erase at %s" % (SHEET_ERASE,))
+    screen.click(*SHEET_ERASE)
+    time.sleep(10)
+
     for wait in range(1, 80):
         grab = screen.grab("%s-04-erase-wait%02d" % (prefix, wait))
         text = " ".join(w[0] for w in screen.text(grab)).lower()
         log("erase wait %d: %s" % (wait, text[:120] or "(nothing)"))
-        if "erasing" not in text:
-            log("erase finished after %ds" % (wait * 10))
+        if "erasing" not in text and wait > 1:
+            log("erase progress text gone after %ds" % (wait * 10))
             break
         time.sleep(10)
     screen.grab("%s-04-erased" % prefix)
