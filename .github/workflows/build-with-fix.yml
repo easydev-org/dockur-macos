@@ -253,7 +253,11 @@ jobs:
         uses: easydev-org/easyagent-github-ext/actions/log-stream@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          name: installer-drive
+          # Version in the name: three runs of this workflow share a commit when 14, 15
+          # and 26 are dispatched together, and log-stream identifies its check run by
+          # NAME - so a fixed name meant two of the three streams were silently replaced
+          # by whichever started last. Only one version was ever watchable.
+          name: installer-drive-
           interval: "10"
           command: |
             set -eux
