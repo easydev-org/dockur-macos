@@ -896,7 +896,12 @@ def main():
         # that lives on the left of the button row, exactly where Not now was. Signing
         # in is neither possible nor wanted in a container, and this is the control
         # that says so.
-        if "apple id" in joined.lower():
+        # BOTH NAMES. macOS 14 says "Sign In with Your Apple ID"; 15 and 26 say
+        # "Sign In to Your Apple Account" - Apple renamed the service - so testing only
+        # for 'apple id' meant this pane was never recognised on the newer releases and
+        # the loop pressed Return on it six times in a row.
+        if ("apple id" in joined.lower() or "apple account" in joined.lower()
+                or "sign in with your apple" in joined.lower()):
             log("step %d: apple id pane; clicking Set Up Later at %s"
                 % (step, SKIP_BUTTON))
             screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
