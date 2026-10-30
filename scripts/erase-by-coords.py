@@ -74,12 +74,18 @@ SIDEBAR_OTHERS = ((540, 402), (540, 430))
 SHEET_ERASE = (1146, 639)
 SHEET_CANCEL = (1066, 639)
 
-# The license pane. The Agree button is at y=713, measured by tesseract: its word box is
-# x=987-1023, y=707-720. An earlier value of 676 came from eyeballing the picture and was
-# 37px high - inside the pane, on nothing, which is why fifty-six clicks did nothing. the default focus sits on Disagree, so Return advances
+# TWO Agree buttons exist on this pane, and only one is live.
+#
+# The main window has Disagree (908,710) / Agree (1002,710), and a MODAL sheet sits on top
+# of it reading "I have read and agree to the terms of the software license agreement"
+# with its own Disagree (880,527) / Agree (1020,527). The sheet dims everything behind it,
+# so the main window's Agree cannot be clicked at all - which is why y=713 did nothing and
+# the run pressed it for eighty steps.
+#
+# The sheet's Agree is the one that commits. the default focus sits on Disagree, so Return advances
 # nothing and the run stalls there indefinitely.
-LICENSE_AGREE = (1005, 713)
-LICENSE_DISAGREE = (899, 713)
+LICENSE_AGREE = (1020, 527)
+LICENSE_DISAGREE = (880, 527)
 
 
 def main():
