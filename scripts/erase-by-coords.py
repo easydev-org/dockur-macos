@@ -48,6 +48,7 @@ at fixed heights regardless, so the sequence selects by position and never touch
 """
 
 import os
+import re
 import sys
 import time
 
@@ -58,6 +59,13 @@ from importlib.machinery import SourceFileLoader
 import qmp as qmpmod
 
 import xsh
+
+# The erase sheet title is  Erase "Apple Inc. VirtIO Block Media"?  - a quote of either
+# kind, with or without a space, straight after the word. tesseract gives
+#   erase “apple    (curly, space-separated), so an ASCII-with-space test missed
+# on every pass. The toolbar has a bare "Erase" and the recovery menu has "Repair or
+# erase a disk", so the quote is what separates the sheet from both.
+ERASE_SHEET_RE = re.compile(r'erase\s*[“”"]')
 
 _ocr = SourceFileLoader("drive_ocr", os.path.join(HERE, "drive-ocr.py")).load_module()
 Screen = _ocr.Screen
@@ -334,8 +342,19 @@ def main():
         grab = screen.grab("%s-04-sheet-wait%02d" % (prefix, wait))
         text = " ".join(w[0] for w in screen.text(grab)).lower()
         log("sheet wait %d: %s" % (wait, text[:120] or "(nothing)"))
-        if "will be deleted" in text or "erase" in text and "untitled" in text:
+        # The sheet's TITLE is the reliable marker:  Erase "Apple Inc. VirtIO Block
+        # Media"?  - a quote straight after the word. The toolbar has a bare 'Erase' and
+        # the main window has 'Repair or erase a disk', so 'erase "' separates them cleanly.
+        #
+        # 'will be deleted' lives in the sheet's BODY, and OCR does not always pick that up:
+        # on one run the title was read on all nineteen passes while the body never was,
+        # and the check reported 'no erase sheet appeared' with the sheet plainly on screen.
+        # A quote of either kind, with or without a space, straight after the word.
+        # tesseract gives  erase “apple  - curly and space-separated - so matching the
+        # ASCII form with a space missed every time.
+        if re.search(ERASE_SHEET_RE, text) or "will be deleted" in text:
             sheet_seen = True
+            log("erase sheet confirmed: %s" % text[:100])
             break
         if wait >= 3:
             log("Erase produced no sheet - pressing it again")
@@ -450,12 +469,11 @@ def main():
         time.sleep(8)
     if not closed:
         log("WARNING: Disk Utility would not close; the following steps will land on it")
-    else:
-        # Fall back to the chord, but then verify the window actually went away.
-        log("no Quit in the menu; falling back to Cmd-Q")
-        screen.key("esc")
-        time.sleep(1)
-        qmpmod.key_combo(screen.q, "meta_l", "q")
+    # No else branch. There was one, holding the Cmd-Q fallback, and it fired on SUCCESS:
+    # after Disk Utility had closed cleanly it pressed Esc and Cmd-Q at the recovery menu,
+    # which is how three runs ended right after 'clicking Quit' without ever reaching
+    # Reinstall. The fallback belongs inside the 'quit not found' path above, where it
+    # already is.
     time.sleep(15)
     screen.grab("%s-05-menu" % prefix)
 
