@@ -364,8 +364,37 @@ def main():
         log("WARNING: no erase sheet appeared; the disk was NOT erased")
     screen.grab("%s-04-sheet" % prefix)
 
-    log("confirming the erase at %s" % (SHEET_ERASE,))
-    screen.click(*SHEET_ERASE)
+    # The sheet's Erase button moves between releases, like everything else here:
+    #
+    #   14 / 15   Cancel (1064,639)  Erase (1146,639)
+    #   26        Cancel (1064,661)  Erase (1147,661)
+    #
+    # 26 is 22px lower, and clicking the 14/15 position left the sheet open, so the disk was
+    # never erased - which is why Tahoe's installer then showed an empty disk list and the
+    # run looped on 'no Untitled row found' for 150 lines.
+    #
+    # Found in the frame: the LAST word starting 'erase' below the sheet's own title, since
+    # the title also begins with the word. Cancel sits to its left, so the rightmost match
+    # on that row is the button.
+    sheet_ppm = screen.grab("%s-04-sheet-forconfirm" % prefix)
+    confirm_pt = SHEET_ERASE
+    candidates = []
+    for word, x, y, _w, _h in screen.text(sheet_ppm):
+        if word.strip().lower() == "erase" and y > 400:
+            candidates.append((x, y))
+    # The title is also an 'Erase' - it sits at y~463 on all three releases - so a candidate
+    # only counts if it is BELOW that. Without this the picker chose the title on a frame
+    # where the button had not been read yet, and clicked into the sheet's own heading.
+    below_title = [p for p in candidates if p[1] > 560]
+    if below_title:
+        confirm_pt = max(below_title, key=lambda p: (p[1], p[0]))
+        log("sheet Erase at (%d,%d) from the frame" % confirm_pt)
+    else:
+        # Nothing read on the button row: fall back to the measured position rather than
+        # picking the title out of the candidate list.
+        log("button row not read; using the measured %s" % (confirm_pt,))
+    log("confirming the erase at %s" % (confirm_pt,))
+    screen.click(*confirm_pt)
     time.sleep(10)
 
     # A progress dialog appears, and it CONTAINS THE WORD 'erasing' EVEN WHEN FINISHED:
