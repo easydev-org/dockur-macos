@@ -40,6 +40,10 @@ on:
         description: "Tag to publish the driven disk under (empty = skip publishing)"
         required: false
         default: "desktop"
+      want_ssh:
+        description: "Also turn Remote Login on before publishing (stage 3). Off: the run stops at the desktop."
+        required: false
+        default: ""
       republish_from:
         description: "Run id whose macos-desktop-disk should be re-published, skipping the VM entirely"
         required: false
@@ -290,7 +294,7 @@ jobs:
         uses: easydev-org/easyagent-github-ext/actions/log-stream@main
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          name: setup-assistant-drive
+          name: setup-assistant-drive-${{ github.event.inputs.publish_tag }}
           interval: "10"
           command: |
             set -eu
@@ -339,7 +343,10 @@ jobs:
             # The socket is created by root inside the container, so connecting to
             # it needs the same side of the boundary: without this the driver dies
             # on PermissionError at connect(), having read nothing.
-            sudo python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
+            # WANT_SSH is read by the driver. Unset means stage 2 only: drive the wizard to
+            # the desktop and publish. Stage 3 sets it to 1 and turns Remote Login on
+            # against a published desktop disk.
+            sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"               python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
             sudo chown -R "$(id -u):$(id -g)" frames || true
 
             echo "=== frames ==="

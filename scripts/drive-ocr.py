@@ -768,10 +768,20 @@ def main():
             # reproduce a character, so none of that applies: Spotlight takes the word
             # "sharing", System Settings opens on the pane that holds Remote Login, and
             # the switch is found by reading the screen.
-            enable_ssh_from_desktop(screen, log, prefix)
-            probe_ssh(log)
+            # SSH IS A SEPARATE STAGE, OFF BY DEFAULT.
+            #
+            # Reaching the desktop and enabling remote login are different pieces of work
+            # with different failure modes, and bundling them meant one broken switch
+            # invalidated a disk that was otherwise finished. Stage 2 ships a desktop disk;
+            # stage 3 turns SSH on against that published disk. Set WANT_SSH=1 to do both
+            # in one pass.
+            if os.environ.get("WANT_SSH") == "1":
+                enable_ssh_from_desktop(screen, log, prefix)
+                probe_ssh(log)
+            else:
+                log("WANT_SSH not set; stopping at the desktop")
             # The workflow publishes the disk when it sees DESKTOP REACHED in the log,
-            # so this run ships a desktop disk whether or not the switch was found.
+            # so this run ships a desktop disk either way.
             break
 
         if not words:
