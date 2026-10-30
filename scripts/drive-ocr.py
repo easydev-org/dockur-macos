@@ -41,6 +41,9 @@ PRIMARY_BUTTON = (1306, 810)
 # The transfer pane's decline control: left of Back and Continue on the button row,
 # where "Not now" sits on the migration pane.
 DONT_TRANSFER_BUTTON = (604, 810)
+# 26's transfer pane offers four radio cards and no Don't Transfer; the last card is the
+# one that declines. Measured from the captured frame: 'Set up as new' at (869,671).
+SET_UP_AS_NEW = (869, 671)
 
 # Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
 # appears in every pane diagnosis. Measured, not guessed.
@@ -930,6 +933,33 @@ def main():
                 time.sleep(9)
                 log("step %d: after %r -> %s" % (step, label,
                     signature_from(screen, prefix, step)))
+                continue
+            # TWO LAYOUTS, and they need different answers.
+            #
+            # 15 offers a single "Don't Transfer" text button to the left of Continue.
+            # 26 asks "How do you want to transfer your information?" with four radio
+            # cards instead, the last of which reads "Set up as new" - there is no
+            # Don't Transfer on it at all:
+            #
+            #   Transfer Your Data to This Mac                          (826,433)
+            #   From a Mac, Time Machine, or startup disk               (897,598)
+            #   Set up with iPhone or iPad                              (857,646)
+            #   Set up as new                                           (869,671)
+            #   Back (1225,810)   Continue (1306,814)
+            #
+            # Clicking (604,810) on this layout hits empty space beside Back, which is
+            # why 26 returned to the same pane for thirty steps.
+            if "set up as new" in joined.lower() or "set up as" in joined.lower():
+                # Find the row by its words rather than a constant: take the lowest
+                # 'new' below the body copy, clicking the card's own row.
+                log("step %d: transfer pane asks how; choosing 'Set up as new'" % step)
+                screen.click(SET_UP_AS_NEW[0], SET_UP_AS_NEW[1])
+                time.sleep(3)
+                log("step %d: pressing Continue at %s" % (step, PRIMARY_BUTTON))
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(9)
+                log("step %d: after Set up as new -> %s"
+                    % (step, signature_from(screen, prefix, step)))
                 continue
             # No readable label: "Don't Transfer" sits left of Continue on this pane.
             log("step %d: transfer pane; clicking the decline control at %s"
