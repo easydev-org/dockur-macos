@@ -852,14 +852,36 @@ def main():
                 continue
 
             # Continue is not enabled, so nothing is selected. Click a row that is
-            # definitely visible - the middle of the list - which enables it.
+            # definitely visible - the middle of the list - which enables it, and then
+            # click Continue IN THE SAME STEP.
+            #
+            # Without the second click this looped thirty times on 26: each pass clicked
+            # a row, did not press Continue, and on the next pass re-read the pane,
+            # found Continue still not enabled, and clicked a different row. The log is
+            # thirty lines of 'Continue not enabled; clicking row' alternating between
+            # Tokelau, Trinidad and Tonga.
             rows = find_list_rows(words)
             if rows:
                 pick = rows[len(rows) // 2]
                 log("step %d: Continue not enabled; clicking row %r at %s"
                     % (step, pick[1], pick[0]))
                 screen.click(pick[0][0], pick[0][1])
-                time.sleep(2)
+                time.sleep(3)
+                # Re-read: the row click enables the button, and its position is fixed.
+                again = signature_from(screen, prefix, step)
+                log("step %d: after choosing a row -> %s" % (step, again))
+                btn, label = find_button(screen.text(
+                    screen.grab("%s-s%d-rowpicked" % (prefix, step))))
+                if btn is not None:
+                    log("step %d: clicking %r at %s" % (step, label, btn))
+                    screen.click(btn[0], btn[1])
+                    time.sleep(8)
+                    main.country_phase = None
+                    continue
+                log("step %d: still no button after choosing a row" % step)
+                screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+                time.sleep(8)
+                main.country_phase = None
                 continue
             log("step %d: country pane has no rows and no button; pressing Return" % step)
             screen.key("ret")
