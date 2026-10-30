@@ -388,11 +388,68 @@ def main():
     menu = " ".join(w[0] for w in screen.text(screen.grab("%s-05-appmenu-ocr" % prefix))).lower()
     log("app menu: %s" % menu[:160])
     if "quit" in menu:
-        for word, x, y, _w, _h in screen.text(screen.grab("%s-05-appmenu-ocr2" % prefix)):
+        # The drop-down is read from its own region. The whole frame at psm 3 returns it,
+        # but not always at a usable position - on 26 the click landed at (91,201), 25px
+        # right and 17px below where 14 put it, and Disk Utility stayed open for the rest
+        # of the run while every later click landed on its window.
+        #
+        # The menu hangs below the app menu at the top-left, so that box is where to look.
+        menu_ppm = screen.grab("%s-05-appmenu-crop" % prefix)
+        crop = _crop_ppm(menu_ppm, menu_ppm.replace(".ppm", "-box.ppm"),
+                         (20, 20, 420, 300))
+        quit_pt = None
+        for word, x, y, _w, _h in (_read_words(crop, psm="6") if crop else []):
             if word.strip().lower().startswith("quit"):
-                log("clicking Quit at (%d,%d)" % (x, y))
-                screen.click(x, y)
+                quit_pt = (20 + x, 20 + y)
+                log("Quit item at (%d,%d) from the cropped menu" % quit_pt)
                 break
+        if quit_pt is None:
+            # Fall back to the whole-frame reading for menus that render differently.
+            for word, x, y, _w, _h in screen.text(screen.grab("%s-05-appmenu-ocr2" % prefix)):
+                if word.strip().lower().startswith("quit"):
+                    quit_pt = (x, y)
+                    log("Quit item at (%d,%d) from the whole frame" % quit_pt)
+                    break
+        if quit_pt is not None:
+            log("clicking Quit at (%d,%d)" % quit_pt)
+            screen.click(*quit_pt)
+        else:
+            log("Quit item not found; falling back to Cmd-Q")
+            screen.key("esc")
+            time.sleep(1)
+            qmpmod.key_combo(screen.q, "meta_l", "q")
+
+    # VERIFY it actually closed. On 26 the Quit click missed, Disk Utility stayed open, and
+    # every later step - Reinstall, Continue, and a whole run of Returns - landed on its
+    # window without the log ever saying so.
+    time.sleep(10)
+    closed = False
+    for attempt in range(1, 4):
+        after = joined(screen.read("%s-05-afterquit%d" % (prefix, attempt)))
+        if "disk utility" not in after:
+            closed = True
+            log("Disk Utility is closed (attempt %d)" % attempt)
+            break
+        log("still in Disk Utility; retrying the app menu (attempt %d)" % attempt)
+        screen.click(63, 15)
+        time.sleep(3)
+        ppm = screen.grab("%s-05-retrymenu%d" % (prefix, attempt))
+        box = _crop_ppm(ppm, ppm.replace(".ppm", "-box.ppm"), (20, 20, 420, 300))
+        again = None
+        for word, x, y, _w, _h in (_read_words(box, psm="6") if box else []):
+            if word.strip().lower().startswith("quit"):
+                again = (20 + x, 20 + y)
+                break
+        if again is not None:
+            log("clicking Quit again at (%d,%d)" % again)
+            screen.click(*again)
+        else:
+            qmpmod.key_combo(screen.q, "meta_l", "q")
+            screen.key("esc")
+            time.sleep(1)
+        time.sleep(8)
+    if not closed:
+        log("WARNING: Disk Utility would not close; the following steps will land on it")
     else:
         # Fall back to the chord, but then verify the window actually went away.
         log("no Quit in the menu; falling back to Cmd-Q")

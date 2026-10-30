@@ -39,6 +39,9 @@ permissions:
   checks: write
   # actions: write is needed to re-dispatch this workflow from inside it.
   actions: write
+  # packages: write is what lets the setup disk be pushed to ghcr - without it oras
+  # authenticates and then fails on the push with a 403.
+  packages: write
 
 jobs:
   build:
@@ -362,6 +365,16 @@ jobs:
             frames/**
           if-no-files-found: warn
           retention-days: 14
+
+      # The manual branch stops at Setup Assistant, so its disk is stage 1 of three:
+      # "installed, not yet configured". Publish it here or the work dies with the runner.
+      - name: publish the setup disk to ghcr
+        if: github.event.inputs.manual_install == 'true'
+        env:
+          # oras logs in with this, and the script reads GITHUB_TOKEN rather than an
+          # argument so the secret never appears in the command line.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash scripts/publish-setup-disk.sh "${{ github.event.inputs.macos_version }}" "${{ github.event.inputs.publish_tag }}"
 
       - name: what is actually on the disk
         run: |
