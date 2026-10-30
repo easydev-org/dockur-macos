@@ -226,7 +226,14 @@ def main():
     for cx, cy in device_rows[:4]:
         screen.click(cx, cy)
         time.sleep(4)
-        pane = " ".join(w[0] for w in screen.text(screen.grab("%s-02-probe" % prefix)))
+        # The detail pane is read the same way the sidebar is - cropped, then psm 6. The
+        # whole-frame pass drops most of it: on this frame it returned "Internal |
+        # Capacity:" and stopped, with the Child count line that decides the matter
+        # missing entirely.
+        probe_ppm = screen.grab("%s-02-probe" % prefix)
+        pane_crop = _crop_ppm(probe_ppm, probe_ppm.replace(".ppm", "-pane.ppm"),
+                              (700, 330, 1250, 480))
+        pane = joined(_read_words(pane_crop)) if pane_crop else ""
         low = pane.lower()
         log("row (%d,%d): %s" % (cx, cy, pane[:180]))
         # The unformatted target is identified by its SHAPE, not by a word:
@@ -239,7 +246,10 @@ def main():
         # correctly selected, and '68.72' arrives from OCR as '6872.68' with the point
         # lost - so testing for either reports failure on success. Child count is the one
         # field that separates them cleanly: zero children means no partition table yet.
+        # Child count reads as either '0' or 'Not Supported' on the same disk depending on
+        # the frame, and both mean 'no partition table yet'.
         if ("child count: 0" in low
+                or "child count: not supported" in low
                 or "partition map: not supported" in low
                 or "uninitialized" in low
                 or "6872" in low or "68.72" in low):
@@ -507,6 +517,26 @@ def _crop_ppm(src, dst, box):
 def joined(words):
     """All recognised text on one lower-cased line, for phrase tests."""
     return " ".join(w[0] for w in words).lower()
+
+
+def _read_words(ppm, psm="6", min_conf=25):
+    """OCR a cropped PPM at a given psm, returning [(word, x, y, w, h)]."""
+    r = xsh.run(["tesseract", ppm, "stdout", "--psm", psm, "tsv"], echo=False)
+    words = []
+    for line in (r.out or "").splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) < 12:
+            continue
+        try:
+            conf = float(parts[10])
+            x, y, w, h = (int(parts[6]), int(parts[7]), int(parts[8]), int(parts[9]))
+        except ValueError:
+            continue
+        word = parts[11].strip()
+        if not word or conf < min_conf:
+            continue
+        words.append((word, x + w // 2, y + h // 2, w, h))
+    return words
 
 
 def sidebar_rows(screen, ppm):
