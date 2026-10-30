@@ -148,32 +148,78 @@ def main():
     time.sleep(20)
     screen.grab("%s-01-du" % prefix)
 
-    # 2. Select the target. No View, no Show All Devices - the physical disks are listed
-    #    in the default view.
+    # 2. Select the target.
     #
-    #    The rows are located in the frame rather than assumed at a fixed height: one
-    #    capture puts 'Internal' at y=313 with its first device at y=336, another at y=350
-    #    and y=374. A constant misses the sidebar entirely on the first of those, which is
-    #    how a whole run managed to erase nothing while reporting success.
+    # The physical disks are not always in the sidebar. A captured frame shows only
+    # disk2s1 - one volume, 2.88 GB, mounted read-only - and no device rows at all, which
+    # means Show Only Volumes is in force for that boot. Selecting by a fallback point in
+    # that state clicks the recovery volume, erases the recovery volume, and leaves the
+    # installer with nothing to install onto.
     #
-    #    The first device row under the heading is the 64 GiB target - the recovery image
-    #    and the OpenCore disk sort after it.
-    target_pt = SIDEBAR_TARGET
+    # So the disk list is inspected first, and the row is chosen by what the detail pane
+    # reports after clicking it - the 64 GiB target is the one that reads Uninitialized
+    # with 68.72 GB. No fallback: if no row qualifies, the run stops rather than guessing.
+    heading_seen = False
+    device_rows = []
     for word, x, y, _w, _h in screen.text(screen.grab("%s-02-sidebar" % prefix)):
-        if "virt" in word.strip().lower() and x < 700:
-            target_pt = (x, y)
-            log("sidebar device row at (%d,%d)" % (x, y))
+        low = word.strip().lower()
+        if low == "internal" and x < 700:
+            heading_seen = True
+            continue
+        if heading_seen and x < 700 and ("virt" in low or "block" in low or "media" in low):
+            device_rows.append((x, y))
+
+    if not device_rows:
+        # Show All Devices, only now and only because it is the difference between a
+        # sidebar with disks in it and one without.
+        log("no device rows in the sidebar; trying Show All Devices")
+        for word, x, y, _w, _h in screen.text(screen.grab("%s-02-tb" % prefix)):
+            if word.strip().lower().startswith("view") and 250 < y < 380:
+                screen.click(x, y)
+                time.sleep(3)
+                menu = " ".join(w[0] for w in screen.text(screen.grab("%s-02-vm" % prefix))).lower()
+                log("View menu: %s" % menu[:120])
+                for mword, mx, my, _mw, _mh in screen.text(screen.grab("%s-02-vm2" % prefix)):
+                    if mword.strip().lower() == "all":
+                        screen.click(mx, my)
+                        time.sleep(6)
+                        break
+                break
+        for word, x, y, _w, _h in screen.text(screen.grab("%s-02-sidebar2" % prefix)):
+            low = word.strip().lower()
+            if x < 700 and ("virt" in low or "block" in low or "media" in low):
+                device_rows.append((x, y))
+
+    log("device rows in the sidebar: %s" % (device_rows,))
+    if not device_rows:
+        log("FATAL: no physical disk in the sidebar; the target cannot be selected")
+        screen.close()
+        return 1
+
+    # Click each candidate and keep the one whose detail pane says it is unformatted with
+    # tens of gigabytes. The recovery image and the OpenCore disk report 2.88 GB and
+    # 268.4 MB, and both have a child count; only the target reads Uninitialized.
+    target_pt = None
+    for cx, cy in device_rows[:4]:
+        screen.click(cx, cy)
+        time.sleep(4)
+        pane = " ".join(w[0] for w in screen.text(screen.grab("%s-02-probe" % prefix)))
+        low = pane.lower()
+        log("row (%d,%d): %s" % (cx, cy, pane[:150]))
+        if "uninitialized" in low or "68.72" in low:
+            target_pt = (cx, cy)
             break
-    else:
-        log("no device row found; using %s" % (target_pt,))
+
+    if target_pt is None:
+        log("FATAL: no row reported an unformatted 64 GiB disk")
+        screen.close()
+        return 1
+
     log("selecting the target device at %s" % (target_pt,))
     screen.click(*target_pt)
     time.sleep(4)
     screen.grab("%s-02-selected" % prefix)
 
-    # 3. Erase, and confirm. Both presses are single attempts now - if the sheet does not
-    #    appear the run continues to the log rather than looping, because the previous
-    #    retry logic is what kept dismissing it.
     # The Erase tab is drawn icon-over-label, and only the icon responds: clicking the
     # label's own text does nothing. Its height is not fixed between frames - one capture
     # shows the label at y=332, another at y=294 - so a constant is wrong by up to 38px,
