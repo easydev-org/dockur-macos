@@ -57,6 +57,8 @@ sys.path.insert(0, HERE)
 from importlib.machinery import SourceFileLoader
 import qmp as qmpmod
 
+import xsh
+
 _ocr = SourceFileLoader("drive_ocr", os.path.join(HERE, "drive-ocr.py")).load_module()
 Screen = _ocr.Screen
 
@@ -164,15 +166,36 @@ def main():
     # So the disk list is inspected first, and the row is chosen by what the detail pane
     # reports after clicking it - the 64 GiB target is the one that reads Uninitialized
     # with 68.72 GB. No fallback: if no row qualifies, the run stops rather than guessing.
-    heading_seen = False
+    # THE SIDEBAR IS OCR-READABLE ONLY WHEN CROPPED. A whole-frame pass at psm 3 or psm 11
+    # returns nothing from those pixels - on a captured macOS 15 frame it reported an empty
+    # sidebar while the crop read
+    #
+    #   Internal
+    #   Apple Inc. VirtIO Block Media
+    #   Apple Inc. VirtIO Block Media
+    #
+    # Two runs of 15 and 26 were failed on that silence, with a confident explanation about
+    # virtio enumeration. The disks were there. sidebar_rows() crops first.
+    sidebar_ppm = screen.grab("%s-02-sidebar" % prefix)
+    rows = sidebar_rows(screen, sidebar_ppm)
+    log("sidebar OCR (%d words): %s" % (len(rows), joined(rows)[:150]))
+
+    # The device rows are the ones naming a controller; the volume rows read disk0s1 etc.
+    # x and y here are crop-relative, so the crop origin is added back.
     device_rows = []
-    for word, x, y, _w, _h in screen.text(screen.grab("%s-02-sidebar" % prefix)):
+    for word, x, y, _w, _h in rows:
         low = word.strip().lower()
-        if low == "internal" and x < 700:
-            heading_seen = True
-            continue
-        if heading_seen and x < 700 and ("virt" in low or "block" in low or "media" in low):
-            device_rows.append((x, y))
+        if low in ("apple", "inc.", "virtio", "virtlo", "block", "media"):
+            device_rows.append((400 + x, 300 + y))
+    # Collapse the several words of one label into one point per row.
+    merged = []
+    for x, y in device_rows:
+        for i, (mx, my) in enumerate(merged):
+            if abs(my - y) <= 12:
+                break
+        else:
+            merged.append((x, y))
+    device_rows = merged
 
     # NO VIEW CLICK. When the sidebar holds only the recovery volume, the guest did not
     # get its install disk - the volume name differs between boots (disk1s1 on one,
@@ -428,3 +451,70 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+def _read_ppm(path):
+    with open(path, "rb") as fh:
+        if fh.readline().strip() != b"P6":
+            return None
+        line = fh.readline()
+        while line.startswith(b"#"):
+            line = fh.readline()
+        w, h = map(int, line.split())
+        fh.readline()
+        return w, h, fh.read()
+
+
+def _crop_ppm(src, dst, box):
+    """Write a sub-rectangle of a P6 PPM. box is (x0, y0, x1, y1)."""
+    got = _read_ppm(src)
+    if not got:
+        return None
+    w, h, data = got
+    x0, y0, x1, y1 = box
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    buf = bytearray()
+    for y in range(y0, y1):
+        buf += data[(y * w + x0) * 3:(y * w + x1) * 3]
+    with open(dst, "wb") as fh:
+        fh.write(b"P6\n%d %d\n255\n" % (x1 - x0, y1 - y0))
+        fh.write(bytes(buf))
+    return dst
+
+
+def sidebar_rows(screen, ppm):
+    """Return [(word, x_centre, y_centre, w, h)] for the Disk Utility sidebar only.
+
+    WHY THIS CROP EXISTS. The whole-frame pass drops the sidebar entirely: on a captured
+    frame, tesseract at --psm 3 and at --psm 11 both returned nothing from those
+    400x200 pixels, while --psm 6 on the same pixels cropped out read them perfectly:
+
+        Internal
+        Apple Inc. VirtIO Block Media
+        Apple Inc. VirtIO Block Media
+        disk0s1
+
+    That silence was read as "this guest has no install disk" and two runs of macOS 15 and
+    26 were failed for it, with a confident note about virtio enumeration. The disks were
+    there the whole time. The sidebar is at a fixed place, so crop it and use a mode that
+    expects short lines.
+    """
+    cropped = _crop_ppm(ppm, ppm.replace(".ppm", "-sidebar.ppm"), (400, 300, 700, 500))
+    if not cropped:
+        return []
+    r = xsh.run(["tesseract", cropped, "stdout", "--psm", "6", "tsv"], echo=False)
+    words = []
+    for line in (r.out or "").splitlines()[1:]:
+        parts = line.split("\t")
+        if len(parts) < 12:
+            continue
+        try:
+            conf = float(parts[10])
+            x, y, w, h = (int(parts[6]), int(parts[7]), int(parts[8]), int(parts[9]))
+        except ValueError:
+            continue
+        word = parts[11].strip()
+        if not word or conf < 30:
+            continue
+        words.append((word, x + w // 2, y + h // 2, w, h))
+    return words
