@@ -319,6 +319,10 @@ jobs:
 
       - name: did the manual install reach Setup Assistant
         if: github.event.inputs.manual_install == 'true'
+        env:
+          # gh refuses to run in a workflow without this, even when the job's token has
+          # actions: write - the CLI reads GH_TOKEN and nothing else.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
           LOG=frames/stage1-coords.log
