@@ -28,12 +28,38 @@ fi
 # torn image.
 sudo docker rm -f macinst >/dev/null 2>&1 || true
 sudo pkill -f "qemu-system-x86_64" 2>/dev/null || true
+
+# Process check that cannot match itself.
+#
+# 'pgrep -f qemu-system-x86_64' matches its OWN command line - the pattern is in pgrep's
+# argv - so the first publish aborted with 'qemu still running' and the disk perfectly
+# idle. 'pgrep -x' avoids that but warns that a name over 15 characters matches nothing,
+# and qemu-system-x86_64 is 18.
+#
+# So ask /proc directly: read each process's comm, which is the executable name and can
+# never contain our search string. qemu's comm is 'qemu-system-x86' (15 chars, truncated by
+# the kernel), so the prefix test is the correct one.
+qemu_running() {
+  for c in /proc/[0-9]*/comm; do
+    [ -r "$c" ] || continue
+    case "$(cat "$c" 2>/dev/null)" in
+      qemu-system-*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 for _ in $(seq 1 30); do
-  pgrep -f "qemu-system-x86_64" >/dev/null 2>&1 || break
+  qemu_running || break
   sleep 2
 done
-if sudo pgrep -f "qemu-system-x86_64" >/dev/null 2>&1; then
+
+if qemu_running; then
   echo "::error::qemu still running, refusing to touch the disk"
+  for c in /proc/[0-9]*/comm; do
+    [ -r "$c" ] || continue
+    case "$(cat "$c" 2>/dev/null)" in qemu-system-*) echo "  $c: $(cat "$c")" ;; esac
+  done
   exit 1
 fi
 
