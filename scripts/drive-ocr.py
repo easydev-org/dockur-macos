@@ -948,61 +948,6 @@ def main():
             log("step %d: after Not now -> %s" % (step, after))
             continue
 
-        # The Apple ID pane: "Sign In with Your Apple ID" with a "Set Up Later" option
-        # that lives on the left of the button row, exactly where Not now was. Signing
-        # in is neither possible nor wanted in a container, and this is the control
-        # that says so.
-        # BOTH NAMES. macOS 14 says "Sign In with Your Apple ID"; 15 and 26 say
-        # "Sign In to Your Apple Account" - Apple renamed the service - so testing only
-        # for 'apple id' meant this pane was never recognised on the newer releases and
-        # the loop pressed Return on it six times in a row.
-        # 'apple account' ALONE IS NOT ENOUGH. The account-creation pane's body copy
-        # reads "Create a Mac Account - The password you create here will be used to log
-        # in", so a bare 'apple account' test matched THAT pane and clicked Set Up Later
-        # on it, skipping the form entirely. Require the sign-in wording.
-        if ("apple id" in joined.lower()
-                or "sign in to your apple" in joined.lower()
-                or "sign in with your apple" in joined.lower()):
-            log("step %d: apple id pane; clicking Set Up Later at %s"
-                % (step, SKIP_BUTTON))
-            screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
-            time.sleep(9)
-            after = signature_from(screen, prefix, step)
-            log("step %d: after Set Up Later -> %s" % (step, after))
-            if after is not None and "are you sure" in after.lower():
-                # A confirmation sheet: "Are you sure you want to skip sign in with an
-                # Apple ID?" with Skip and Cancel. It is a smaller sheet centred over
-                # the main window, so its buttons are NOT at the main window's
-                # (1306,810) - clicking there hits the sheet's own blank area and the
-                # dialog stays up, which is what the log shows step after step.
-                #
-                # The sheet's buttons sit on its lower edge, and "Skip" is the
-                # confirming one, on the right of that pair. Sweep along the sheet's
-                # button row: the sheet is narrower than the window, so its right-hand
-                # button is well left of 1306.
-                log("step %d: confirmation sheet; clicking Skip at %s"
-                    % (step, SHEET_SKIP))
-                screen.click(SHEET_SKIP[0], SHEET_SKIP[1])
-                time.sleep(9)
-                now_at = signature_from(screen, prefix, step)
-                log("step %d: now at -> %s" % (step, now_at))
-                if now_at is not None and "are you sure" in now_at.lower():
-                    # Only if the click missed does it try the other sheet button.
-                    log("step %d: still up; clicking the left sheet button" % step)
-                    screen.click(899, 634)
-                    time.sleep(8)
-                    log("step %d: now at -> %s"
-                        % (step, signature_from(screen, prefix, step)))
-                continue
-            continue
-
-        # The account creation pane. This is the one pane that cannot be clicked
-        # through - it needs five fields typed, and until they are filled Continue
-        # refuses with "You haven't provided all of the requested information".
-        #
-        # The fields are stacked under the pane's title, and each is clicked before
-        # typing because tab order is not guaranteed. Names here are deliberately
-        # simple: the account must exist for the machine to reach a desktop.
         if ("computer account" in joined.lower() or "create a computer" in joined.lower()
                 or "create a mac account" in joined.lower()):
             if not getattr(main, "account_filled", False):
@@ -1061,6 +1006,62 @@ def main():
         # The location-services confirmation, which appears right after the account
         # is accepted. Its declining answer is the one to give: nothing in a container
         # has a location, and the sheet's buttons are again well inside the window.
+
+        # The Apple ID pane: "Sign In with Your Apple ID" with a "Set Up Later" option
+        # that lives on the left of the button row, exactly where Not now was. Signing
+        # in is neither possible nor wanted in a container, and this is the control
+        # that says so.
+        # BOTH NAMES. macOS 14 says "Sign In with Your Apple ID"; 15 and 26 say
+        # "Sign In to Your Apple Account" - Apple renamed the service - so testing only
+        # for 'apple id' meant this pane was never recognised on the newer releases and
+        # the loop pressed Return on it six times in a row.
+        # 'apple account' ALONE IS NOT ENOUGH. The account-creation pane's body copy
+        # reads "Create a Mac Account - The password you create here will be used to log
+        # in", so a bare 'apple account' test matched THAT pane and clicked Set Up Later
+        # on it, skipping the form entirely. Require the sign-in wording.
+        if ("apple id" in joined.lower()
+                or "sign in to your apple" in joined.lower()
+                or "sign in with your apple" in joined.lower()):
+            log("step %d: apple id pane; clicking Set Up Later at %s"
+                % (step, SKIP_BUTTON))
+            screen.click(SKIP_BUTTON[0], SKIP_BUTTON[1])
+            time.sleep(9)
+            after = signature_from(screen, prefix, step)
+            log("step %d: after Set Up Later -> %s" % (step, after))
+            if after is not None and "are you sure" in after.lower():
+                # A confirmation sheet: "Are you sure you want to skip sign in with an
+                # Apple ID?" with Skip and Cancel. It is a smaller sheet centred over
+                # the main window, so its buttons are NOT at the main window's
+                # (1306,810) - clicking there hits the sheet's own blank area and the
+                # dialog stays up, which is what the log shows step after step.
+                #
+                # The sheet's buttons sit on its lower edge, and "Skip" is the
+                # confirming one, on the right of that pair. Sweep along the sheet's
+                # button row: the sheet is narrower than the window, so its right-hand
+                # button is well left of 1306.
+                log("step %d: confirmation sheet; clicking Skip at %s"
+                    % (step, SHEET_SKIP))
+                screen.click(SHEET_SKIP[0], SHEET_SKIP[1])
+                time.sleep(9)
+                now_at = signature_from(screen, prefix, step)
+                log("step %d: now at -> %s" % (step, now_at))
+                if now_at is not None and "are you sure" in now_at.lower():
+                    # Only if the click missed does it try the other sheet button.
+                    log("step %d: still up; clicking the left sheet button" % step)
+                    screen.click(899, 634)
+                    time.sleep(8)
+                    log("step %d: now at -> %s"
+                        % (step, signature_from(screen, prefix, step)))
+                continue
+            continue
+
+        # The account creation pane. This is the one pane that cannot be clicked
+        # through - it needs five fields typed, and until they are filled Continue
+        # refuses with "You haven't provided all of the requested information".
+        #
+        # The fields are stacked under the pane's title, and each is clicked before
+        # typing because tab order is not guaranteed. Names here are deliberately
+        # simple: the account must exist for the machine to reach a desktop.
         if "location services" in joined.lower():
             # This one is a full pane, not a sheet: "Enable Location Services" with an
             # explanation and the usual Back/Continue row. The sheet positions tried
