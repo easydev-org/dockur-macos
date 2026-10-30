@@ -449,9 +449,6 @@ def main():
     return 1
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 def _read_ppm(path):
     with open(path, "rb") as fh:
         if fh.readline().strip() != b"P6":
@@ -518,3 +515,7 @@ def sidebar_rows(screen, ppm):
             continue
         words.append((word, x + w // 2, y + h // 2, w, h))
     return words
+
+
+if __name__ == "__main__":
+    sys.exit(main())
