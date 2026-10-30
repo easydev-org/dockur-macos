@@ -269,31 +269,34 @@ def main():
     screen.click(*SHEET_ERASE)
     time.sleep(10)
 
-    # A 64 GiB erase on emulated hardware is slow, but 'erasing' disappearing is not the
-    # only completion signal - and possibly not a signal at all. The thing that actually
-    # proves success is the new volume appearing in the sidebar: eraseDisk formats the
-    # target as APFS and names it Untitled, so a row reading 'untitled' is the evidence.
+    # A progress dialog appears, and it CONTAINS THE WORD 'erasing' EVEN WHEN FINISHED:
     #
-    # Polling runs to 30 minutes and then continues regardless. Waiting forever on a
-    # string that may never change wastes the whole run; continuing with a screenshot and
-    # an explicit note does not.
-    erased_ok = False
-    for wait in range(1, 180):
-        grab = screen.grab("%s-04-erase-wait%03d" % (prefix, wait))
+    #   Erasing "Apple Inc. VirtIO Block Media" and creating "Untitled"
+    #   Erase process is complete. Click Done to continue.
+    #
+    # So waiting for 'erasing' to disappear never ends - that word is the dialog's title.
+    # The run sat on it for thirteen minutes while the erase had actually finished in the
+    # first ten seconds.
+    #
+    # The completion line is 'Erase process is complete', and the dialog then wants Done
+    # at (1001, 572). That is the whole remainder of this step.
+    done_pt = (1001, 572)
+    for wait in range(1, 60):
+        grab = screen.grab("%s-04-erase-wait%02d" % (prefix, wait))
         text = " ".join(w[0] for w in screen.text(grab)).lower()
-        if wait % 3 == 1:
-            log("erase wait %d: %s" % (wait, text[:120] or "(nothing)"))
-        if "untitled" in text and "erasing" not in text:
-            erased_ok = True
-            log("erase complete after %ds: an Untitled volume is in the sidebar" % (wait * 10))
+        log("erase wait %d: %s" % (wait, text[:130] or "(nothing)"))
+        if "complete" in text or "done" in text:
+            log("erase reported complete after %ds" % (wait * 5))
+            for word, x, y, _w, _h in screen.text(grab):
+                if word.strip().lower().startswith("done"):
+                    done_pt = (x, y)
+                    log("Done button at (%d,%d)" % done_pt)
+                    break
             break
-        if "erasing" not in text and wait > 3:
-            erased_ok = True
-            log("erase progress gone after %ds" % (wait * 10))
-            break
-        time.sleep(10)
-    if not erased_ok:
-        log("erase still reporting progress after 30 minutes; continuing anyway")
+        time.sleep(5)
+    log("clicking Done at %s" % (done_pt,))
+    screen.click(*done_pt)
+    time.sleep(12)
     screen.grab("%s-04-erased" % prefix)
 
     # 4. Leave Disk Utility by its own menu. A synthesised Cmd-Q did not close it - the
