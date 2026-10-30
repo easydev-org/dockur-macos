@@ -290,13 +290,28 @@ def main():
     #
     # with the disk correctly selected and the button plainly on screen.
     tb_ppm = screen.grab("%s-03-toolbar" % prefix)
-    tb_crop = _crop_ppm(tb_ppm, tb_ppm.replace(".ppm", "-band.ppm"), (1000, 250, 1550, 340))
+    # The band covers the label row across all three releases. Measured label y:
+    #
+    #   14  Erase y=294-302
+    #   15  Erase y=332
+    #   26  Erase y=314
+    #
+    # A 38px spread. Crops tried against all three frames: 285-345 reads cleanly on every
+    # one; 300-350 clips 14, 295-350 loses 14 entirely, 285-350 and 280-350 pick up
+    # trailing noise.
+    #
+    # Widening upward to include the icons breaks
+    # OCR outright on 26, where the icons sit at y=268-272 and the labels at y=314: with
+    # the range starting at 255 the frame came back empty, while 300-350 reads
+    #   Volume First Aid Partition Erase Restore Mount Info
+    # on all three releases. Measured: 15 labels at y=332, 26 labels at y=314.
+    tb_crop = _crop_ppm(tb_ppm, tb_ppm.replace(".ppm", "-band.ppm"), (1000, 285, 1550, 345))
     erase_pt = None
     for word, x, y, _w, _h in (_read_words(tb_crop, psm="6") if tb_crop else []):
         if word.strip().lower().startswith("era"):
-            erase_pt = (1000 + x, 250 + y - 26)
+            erase_pt = (1000 + x, 285 + y - 26)
             log("Erase label at (%d,%d); pressing its tab at %s"
-                % (1000 + x, 250 + y, erase_pt))
+                % (1000 + x, 285 + y, erase_pt))
             break
     if erase_pt is None:
         log("FATAL: no Erase label on this frame - refusing to press a guessed point")
