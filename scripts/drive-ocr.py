@@ -922,7 +922,12 @@ def main():
         # "Sign In to Your Apple Account" - Apple renamed the service - so testing only
         # for 'apple id' meant this pane was never recognised on the newer releases and
         # the loop pressed Return on it six times in a row.
-        if ("apple id" in joined.lower() or "apple account" in joined.lower()
+        # 'apple account' ALONE IS NOT ENOUGH. The account-creation pane's body copy
+        # reads "Create a Mac Account - The password you create here will be used to log
+        # in", so a bare 'apple account' test matched THAT pane and clicked Set Up Later
+        # on it, skipping the form entirely. Require the sign-in wording.
+        if ("apple id" in joined.lower()
+                or "sign in to your apple" in joined.lower()
                 or "sign in with your apple" in joined.lower()):
             log("step %d: apple id pane; clicking Set Up Later at %s"
                 % (step, SKIP_BUTTON))
@@ -964,7 +969,8 @@ def main():
         # The fields are stacked under the pane's title, and each is clicked before
         # typing because tab order is not guaranteed. Names here are deliberately
         # simple: the account must exist for the machine to reach a desktop.
-        if "computer account" in joined.lower() or "create a computer" in joined.lower():
+        if ("computer account" in joined.lower() or "create a computer" in joined.lower()
+                or "create a mac account" in joined.lower()):
             if not getattr(main, "account_filled", False):
                 log("step %d: account pane; filling the form" % step)
                 for label, x, y, value in ACCOUNT_FIELDS:
