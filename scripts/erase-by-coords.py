@@ -444,7 +444,11 @@ def main():
     time.sleep(10)
     closed = False
     for attempt in range(1, 4):
-        after = joined(screen.read("%s-05-afterquit%d" % (prefix, attempt)))
+        # Screen from drive-ocr has grab() and text(); read() was a method I had in the
+        # new guest.py but this script uses the older class, so this raised AttributeError
+        # right after the Quit click. The step ends in "|| true", so the job still
+        # reported success and the log simply stopped there - three runs lost that way.
+        after = joined(screen.text(screen.grab("%s-05-afterquit%d" % (prefix, attempt))))
         if "disk utility" not in after:
             closed = True
             log("Disk Utility is closed (attempt %d)" % attempt)
