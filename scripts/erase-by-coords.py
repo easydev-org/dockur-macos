@@ -148,12 +148,43 @@ def main():
 
     log("confirming the erase at %s" % (SHEET_ERASE,))
     screen.click(*SHEET_ERASE)
-    time.sleep(45)
+    time.sleep(10)
+
+    # WAIT FOR THE ERASE TO FINISH. The frame right after the click reads
+    # 'erasing "apple inc. virtlo block media"' - it is progress, not completion, and a
+    # 64 GiB erase takes minutes. Sending the quit while that is still running left the
+    # guest inside Disk Utility for the whole remaining run: the reinstall clicks landed
+    # on nothing and eighty Returns changed nothing.
+    for wait in range(1, 80):
+        grab = screen.grab("%s-04-erase-wait%02d" % (prefix, wait))
+        text = " ".join(w[0] for w in screen.text(grab)).lower()
+        log("erase wait %d: %s" % (wait, text[:120] or "(nothing)"))
+        if "erasing" not in text:
+            log("erase finished after %ds" % (wait * 10))
+            break
+        time.sleep(10)
     screen.grab("%s-04-erased" % prefix)
 
-    # 4. Back to the installer list and start the reinstall.
-    log("quitting Disk Utility")
-    qmpmod.key_combo(screen.q, "meta_l", "q")
+    # 4. Leave Disk Utility by its own menu. A synthesised Cmd-Q did not close it - the
+    # menu bar's first item is Disk Utility, and Quit is its last entry.
+    log("quitting Disk Utility from its menu")
+    screen.click(63, 15)
+    time.sleep(3)
+    screen.grab("%s-05-appmenu" % prefix)
+    menu = " ".join(w[0] for w in screen.text(screen.grab("%s-05-appmenu-ocr" % prefix))).lower()
+    log("app menu: %s" % menu[:160])
+    if "quit" in menu:
+        for word, x, y, _w, _h in screen.text(screen.grab("%s-05-appmenu-ocr2" % prefix)):
+            if word.strip().lower().startswith("quit"):
+                log("clicking Quit at (%d,%d)" % (x, y))
+                screen.click(x, y)
+                break
+    else:
+        # Fall back to the chord, but then verify the window actually went away.
+        log("no Quit in the menu; falling back to Cmd-Q")
+        screen.key("esc")
+        time.sleep(1)
+        qmpmod.key_combo(screen.q, "meta_l", "q")
     time.sleep(15)
     screen.grab("%s-05-menu" % prefix)
 
