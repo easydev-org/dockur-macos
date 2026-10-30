@@ -98,6 +98,11 @@ LICENSE_AGREE = (1002, 710)
 LICENSE_SHEET_AGREE = (1020, 527)
 LICENSE_DISAGREE = (880, 527)
 
+# The installer's disk list, after the erase. The entry is the volume eraseDisk created;
+# 'Untitled' is its default name and 68.51 GB its size.
+INSTALLER_DISK = (865, 621)
+INSTALLER_CONTINUE = (1005, 712)
+
 
 def main():
     if len(sys.argv) < 3:
@@ -359,6 +364,38 @@ def main():
             time.sleep(6)
             screen.click(*LICENSE_SHEET_AGREE)
             time.sleep(10)
+            continue
+
+        # The erase target now has to be chosen again, this time in the installer's own
+        # disk list. Measured from the frame:
+        #
+        #   Untitled     x=842-888   y=616-626    centre (865,621)
+        #   68.51 GB     y=632-639
+        #   [Back] (915,712)  [Continue] (1005,712)
+        #
+        # Pressing Return here does nothing at all: the list needs a selection first, and
+        # Return is not bound to it.
+        if "select the disk" in text:
+            # Find the volume rather than assuming where it sits: the list is centred and
+            # its row position follows the number of disks, which is one here but need not
+            # be on another boot.
+            disk_pt = None
+            cont_pt = INSTALLER_CONTINUE
+            for word, x, y, _w, _h in words:
+                low = word.strip().lower()
+                if low.startswith("untitled") and 500 < y < 690:
+                    disk_pt = (x, y)
+                    log("found the target volume at (%d,%d)" % disk_pt)
+                if low.startswith("continue") and y > 690:
+                    cont_pt = (x, y)
+            if disk_pt is None:
+                disk_pt = INSTALLER_DISK
+                log("no Untitled row found; using %s" % (disk_pt,))
+            log("disk selection pane: choosing it, then Continue at %s" % (cont_pt,))
+            screen.click(*disk_pt)
+            time.sleep(3)
+            screen.click(*cont_pt)
+            time.sleep(20)
             continue
 
         screen.key("ret")
