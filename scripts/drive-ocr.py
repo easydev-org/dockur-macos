@@ -924,6 +924,28 @@ def main():
         #
         # The control that declines this pane is "Don't Transfer" / "Don't transfer any
         # data", which is already in BUTTONS, so the generic button search handles it.
+        # THE SEARCH SUB-PANE MUST BE HANDLED BEFORE THE TRANSFER PANE ITSELF.
+        #
+        # Its title is also "Transfer Your Data to This Mac", so the pane check below
+        # matched it and clicked the decline position - which does not exist here. The
+        # frame is unmistakable: title, one explanatory sentence, an "Other Server..."
+        # link, and NO buttons anywhere below y=700. 26 sat on it for thirty steps.
+        #
+        # "Other Server..." appears ONLY on this sub-pane, so it is the marker.
+        if "other server" in joined.lower():
+            log("step %d: search sub-pane; clicking Back at %s" % (step, BACK_BUTTON))
+            screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+            time.sleep(8)
+            after = signature_from(screen, prefix, step)
+            log("step %d: after Back -> %s" % (step, after))
+            # Back lands on the pane that offers the choices; press its primary button
+            # rather than re-entering a card.
+            log("step %d: pressing Continue on the pane Back returned to" % step)
+            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
+            time.sleep(8)
+            log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
+            continue
+
         if ("transfer your data" in joined.lower()
                 or "transfer information" in joined.lower()):
             btn, label = find_button(words)
