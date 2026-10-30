@@ -38,6 +38,9 @@ W, H = 1920, 1080
 # "Continue" at (1306, 810). Every pane uses the same lower-right placement, so when
 # a pane's label cannot be read, this is where to click.
 PRIMARY_BUTTON = (1306, 810)
+# The transfer pane's decline control: left of Back and Continue on the button row,
+# where "Not now" sits on the migration pane.
+DONT_TRANSFER_BUTTON = (604, 810)
 
 # Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
 # appears in every pane diagnosis. Measured, not guessed.
@@ -906,6 +909,37 @@ def main():
         #
         # Reading the pane as a screenshot is what found it: the three labels are
         # legible in the image and invisible in the text extraction.
+        # THE TRANSFER PANE COMES FIRST, and its own title is what identifies it.
+        #
+        # 15 and 26 title this pane "Transfer Your Data to This Mac" and its body mentions
+        # Migration Assistant, so testing for 'migration assistant' matched THIS pane and
+        # clicked Not now on it - which does nothing here. 26 looped on it for 24 steps:
+        #
+        #   step 34: Transfer Your Data to This Mac Select a Mac, Time Machine backup...
+        #   step 34: same pane as last step (22 in a row)
+        #   step 34: migration pane; clicking Not now at (604,810)
+        #
+        # The control that declines this pane is "Don't Transfer" / "Don't transfer any
+        # data", which is already in BUTTONS, so the generic button search handles it.
+        if ("transfer your data" in joined.lower()
+                or "transfer information" in joined.lower()):
+            btn, label = find_button(words)
+            if btn is not None:
+                log("step %d: transfer pane; clicking %r at %s" % (step, label, btn))
+                screen.click(btn[0], btn[1])
+                time.sleep(9)
+                log("step %d: after %r -> %s" % (step, label,
+                    signature_from(screen, prefix, step)))
+                continue
+            # No readable label: "Don't Transfer" sits left of Continue on this pane.
+            log("step %d: transfer pane; clicking the decline control at %s"
+                % (step, DONT_TRANSFER_BUTTON))
+            screen.click(DONT_TRANSFER_BUTTON[0], DONT_TRANSFER_BUTTON[1])
+            time.sleep(9)
+            log("step %d: after Don't Transfer -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
+
         if "migration assistant" in joined.lower():
             log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
             screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
