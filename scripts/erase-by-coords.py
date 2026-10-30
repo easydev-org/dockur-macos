@@ -434,6 +434,7 @@ def main():
     # Blank frames are therefore expected and are not a reason to press anything - Return
     # during the reboot would land on nothing, or worse on a menu.
     blank_run = 0
+    graphics_run = 0
     for step in range(1, 190):
         grab = screen.grab("%s-07-step%02d" % (prefix, step))
         words = screen.text(grab)
@@ -445,14 +446,28 @@ def main():
             screen.close()
             return 0
 
+        # A progress screen carries NO TEXT AT ALL - just an Apple logo and a bar - so
+        # OCR returns nothing and this loop had been calling it a blank screen and waiting
+        # for it to end. It was the END, not a failure: measured on the captured frames,
+        # the bright pixels sit at y=500-980 with a bar at y=560, x=926, 71px wide on
+        # fourteen consecutive passes - the install completing on black.
+        #
+        # So 'no words' is not the same as 'nothing there'. The screen is checked for
+        # content before it is called blank.
         if not text:
-            blank_run += 1
-            if blank_run in (5, 20, 60):
-                log("blank screen x%d - the install reboots itself partway through; "
-                    "waiting rather than pressing keys" % blank_run)
+            if has_graphics(grab):
+                graphics_run += 1
+                if graphics_run in (1, 10, 30, 60):
+                    log("textless progress screen (logo and bar) x%d - the install is "
+                        "running or finishing; waiting" % graphics_run)
+            else:
+                blank_run += 1
+                if blank_run in (5, 20, 60):
+                    log("truly blank screen x%d" % blank_run)
             time.sleep(20)
             continue
         blank_run = 0
+        graphics_run = 0
 
         if "license agreement" in text or "agree" in text:
             # Both steps, in order. See LICENSE_AGREE above: the pane and its sheet use the
@@ -559,6 +574,31 @@ def _read_words(ppm, psm="6", min_conf=25):
         words.append((word, x + w // 2, y + h // 2, w, h))
     return words
 
+
+def has_graphics(ppm, threshold=40, min_rows=5):
+    """True when the frame has something drawn on it, even if nothing is legible.
+
+    The macOS progress screen is an Apple logo and a bar on black: tesseract finds no words,
+    and a pixel census calls it 99.7% black, yet the install is running normally. Both of
+    those signals were read as 'dead screen' and the loop waited for a recovery that was
+    never coming, while the bar sat at the same width for fourteen consecutive frames.
+
+    So content is judged by whether any rows contain lit pixels at all, not by how much of
+    the frame is lit.
+    """
+    got = _read_ppm(ppm)
+    if not got:
+        return False
+    w, h, data = got
+    lit_rows = 0
+    for y in range(0, h, 4):
+        row = data[(y * w) * 3:(y * w + w) * 3]
+        lit = sum(1 for i in range(0, len(row), 12) if row[i] > threshold)
+        if lit > 2:
+            lit_rows += 1
+            if lit_rows >= min_rows:
+                return True
+    return False
 
 def sidebar_rows(screen, ppm):
     """Return [(word, x_centre, y_centre, w, h)] for the Disk Utility sidebar only.

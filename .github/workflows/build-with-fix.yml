@@ -257,7 +257,7 @@ jobs:
           # and 26 are dispatched together, and log-stream identifies its check run by
           # NAME - so a fixed name meant two of the three streams were silently replaced
           # by whichever started last. Only one version was ever watchable.
-          name: installer-drive-
+          name: installer-drive-${{ github.event.inputs.macos_version }}
           interval: "10"
           command: |
             set -eux
