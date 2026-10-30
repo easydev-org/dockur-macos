@@ -269,14 +269,31 @@ def main():
     screen.click(*SHEET_ERASE)
     time.sleep(10)
 
-    for wait in range(1, 80):
-        grab = screen.grab("%s-04-erase-wait%02d" % (prefix, wait))
+    # A 64 GiB erase on emulated hardware is slow, but 'erasing' disappearing is not the
+    # only completion signal - and possibly not a signal at all. The thing that actually
+    # proves success is the new volume appearing in the sidebar: eraseDisk formats the
+    # target as APFS and names it Untitled, so a row reading 'untitled' is the evidence.
+    #
+    # Polling runs to 30 minutes and then continues regardless. Waiting forever on a
+    # string that may never change wastes the whole run; continuing with a screenshot and
+    # an explicit note does not.
+    erased_ok = False
+    for wait in range(1, 180):
+        grab = screen.grab("%s-04-erase-wait%03d" % (prefix, wait))
         text = " ".join(w[0] for w in screen.text(grab)).lower()
-        log("erase wait %d: %s" % (wait, text[:120] or "(nothing)"))
-        if "erasing" not in text and wait > 1:
-            log("erase progress text gone after %ds" % (wait * 10))
+        if wait % 3 == 1:
+            log("erase wait %d: %s" % (wait, text[:120] or "(nothing)"))
+        if "untitled" in text and "erasing" not in text:
+            erased_ok = True
+            log("erase complete after %ds: an Untitled volume is in the sidebar" % (wait * 10))
+            break
+        if "erasing" not in text and wait > 3:
+            erased_ok = True
+            log("erase progress gone after %ds" % (wait * 10))
             break
         time.sleep(10)
+    if not erased_ok:
+        log("erase still reporting progress after 30 minutes; continuing anyway")
     screen.grab("%s-04-erased" % prefix)
 
     # 4. Leave Disk Utility by its own menu. A synthesised Cmd-Q did not close it - the
