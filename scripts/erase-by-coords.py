@@ -84,7 +84,18 @@ SHEET_CANCEL = (1066, 639)
 #
 # The sheet's Agree is the one that commits. the default focus sits on Disagree, so Return advances
 # nothing and the run stalls there indefinitely.
-LICENSE_AGREE = (1020, 527)
+# Licensing is TWO steps, and both buttons are called Agree:
+#
+#   1. the license pane itself - ENGLISH selector, agreement text, Disagree/Agree at
+#      y=710: Agree is (1002, 710)
+#   2. a modal sheet that appears after that click, reading "I have read and agree to the
+#      terms of the software license agreement": Agree is (1020, 527)
+#
+# Clicking only the second point did nothing, because on step 1 it lands on empty pane.
+# Clicking only the first produced the sheet and then stalled. Both are clicked in turn,
+# which is idempotent: if the pane is already past step 1 the first click hits empty space.
+LICENSE_AGREE = (1002, 710)
+LICENSE_SHEET_AGREE = (1020, 527)
 LICENSE_DISAGREE = (880, 527)
 
 
@@ -223,8 +234,13 @@ def main():
             return 0
 
         if "license agreement" in text or "agree" in text:
-            log("license pane: clicking Agree at %s" % (LICENSE_AGREE,))
+            # Both steps, in order. See LICENSE_AGREE above: the pane and its sheet use the
+            # same word at different heights, and pressing either alone stalls.
+            log("license pane: Agree at %s then sheet Agree at %s"
+                % (LICENSE_AGREE, LICENSE_SHEET_AGREE))
             screen.click(*LICENSE_AGREE)
+            time.sleep(6)
+            screen.click(*LICENSE_SHEET_AGREE)
             time.sleep(10)
             continue
 
