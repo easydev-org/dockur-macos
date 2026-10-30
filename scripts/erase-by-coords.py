@@ -283,11 +283,20 @@ def main():
     # guessed point either hits nothing (the run then reports a false 'no erase sheet' and
     # retries forever) or hits a neighbouring control (Restore sits 32px to the right).
     # A wrong press here is worse than a stopped run: it can act on the wrong thing.
+    # Crop the toolbar band before reading it, for the same reason as the sidebar: the
+    # whole-frame pass drops it. Both runs of this commit reported
+    #
+    #   FATAL: no Erase label on this frame
+    #
+    # with the disk correctly selected and the button plainly on screen.
+    tb_ppm = screen.grab("%s-03-toolbar" % prefix)
+    tb_crop = _crop_ppm(tb_ppm, tb_ppm.replace(".ppm", "-band.ppm"), (1000, 250, 1550, 340))
     erase_pt = None
-    for word, x, y, _w, _h in screen.text(screen.grab("%s-03-toolbar" % prefix)):
-        if word.strip().lower().startswith("era") and 250 < y < 400:
-            erase_pt = (x, y - 26)
-            log("Erase label at (%d,%d); pressing its tab at %s" % (x, y, erase_pt))
+    for word, x, y, _w, _h in (_read_words(tb_crop, psm="6") if tb_crop else []):
+        if word.strip().lower().startswith("era"):
+            erase_pt = (1000 + x, 250 + y - 26)
+            log("Erase label at (%d,%d); pressing its tab at %s"
+                % (1000 + x, 250 + y, erase_pt))
             break
     if erase_pt is None:
         log("FATAL: no Erase label on this frame - refusing to press a guessed point")
