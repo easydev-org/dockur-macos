@@ -479,6 +479,11 @@ def _crop_ppm(src, dst, box):
     return dst
 
 
+def joined(words):
+    """All recognised text on one lower-cased line, for phrase tests."""
+    return " ".join(w[0] for w in words).lower()
+
+
 def sidebar_rows(screen, ppm):
     """Return [(word, x_centre, y_centre, w, h)] for the Disk Utility sidebar only.
 
