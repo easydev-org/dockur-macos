@@ -340,7 +340,22 @@ def main():
     # The loop is coordinate-driven like everything else: click Agree whenever the pane is
     # the license, and press Return otherwise. Screenshots are taken throughout so a stuck
     # step can be read afterwards instead of guessed at.
-    for step in range(1, 80):
+    # SIXTY MINUTES, NOT TWENTY. The first run to actually install reached
+    #
+    #   step 74: about 21 minutes remaining
+    #   step 76: (nothing)
+    #   step 79: (nothing)
+    #
+    # and stopped there. The blank frames are the install's own reboot: macOS writes the
+    # first stage, restarts, and continues from the disk, which takes roughly as long
+    # again. A sixty-pass loop at twenty seconds covered twenty minutes and expired in the
+    # middle of that, so the run was recorded as a failure while the install was on
+    # schedule.
+    #
+    # Blank frames are therefore expected and are not a reason to press anything - Return
+    # during the reboot would land on nothing, or worse on a menu.
+    blank_run = 0
+    for step in range(1, 190):
         grab = screen.grab("%s-07-step%02d" % (prefix, step))
         words = screen.text(grab)
         text = " ".join(w[0] for w in words).lower()
@@ -350,6 +365,15 @@ def main():
             log("SETUP ASSISTANT REACHED at step %d" % step)
             screen.close()
             return 0
+
+        if not text:
+            blank_run += 1
+            if blank_run in (5, 20, 60):
+                log("blank screen x%d - the install reboots itself partway through; "
+                    "waiting rather than pressing keys" % blank_run)
+            time.sleep(20)
+            continue
+        blank_run = 0
 
         if "license agreement" in text or "agree" in text:
             # Both steps, in order. See LICENSE_AGREE above: the pane and its sheet use the
