@@ -229,8 +229,21 @@ def main():
         time.sleep(4)
         pane = " ".join(w[0] for w in screen.text(screen.grab("%s-02-probe" % prefix)))
         low = pane.lower()
-        log("row (%d,%d): %s" % (cx, cy, pane[:150]))
-        if "uninitialized" in low or "68.72" in low:
+        log("row (%d,%d): %s" % (cx, cy, pane[:180]))
+        # The unformatted target is identified by its SHAPE, not by a word:
+        #
+        #   target        Capacity: 68.72 GB   Child count: 0    Partition Map: Not Supported
+        #   recovery      Capacity: 2.88 GB    Child count: 1    Partition Map: GUID ...
+        #   OpenCore      Capacity: 268.4 MB   Child count: 1
+        #
+        # 'Uninitialized' is not on this pane at all in the frame where the disk is
+        # correctly selected, and '68.72' arrives from OCR as '6872.68' with the point
+        # lost - so testing for either reports failure on success. Child count is the one
+        # field that separates them cleanly: zero children means no partition table yet.
+        if ("child count: 0" in low
+                or "partition map: not supported" in low
+                or "uninitialized" in low
+                or "6872" in low or "68.72" in low):
             target_pt = (cx, cy)
             break
 
