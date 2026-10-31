@@ -1013,14 +1013,33 @@ def main():
                 and "learn more" in joined.lower()
                 and "continue" not in joined.lower()
                 and "back" not in joined.lower()):
+            # CONTINUE IS THERE, GREY, AND NOTHING IN THE OCR SHOWS IT.
+            #
+            # A crop of the window's lower-right corner read through the image model shows
+            # a grey pill labelled Continue centred near (1300,800) - grey-on-grey, which
+            # tesseract returns as nothing, and 960 lit pixels on every row means a blank
+            # button row is indistinguishable from a populated one by that measure.
+            #
+            # A disabled Continue on this pane means the wizard has not finished: the pane
+            # scrolls, and the usual reason for a grey forward button is unread content.
+            # So scroll the pane to its end first, then press the button's measured centre.
             waits = getattr(main, "privacy_waits", 0) + 1
             main.privacy_waits = waits
-            if waits <= 3:
-                log("step %d: privacy pane has no control; waiting (%d)" % (step, waits))
-                time.sleep(12)
+            if waits == 1:
+                log("step %d: privacy pane; scrolling it to the end" % step)
+                for _ in range(6):
+                    screen.scroll(960, 550, 3)   # positive scrolls DOWN
+                    time.sleep(0.7)
+                time.sleep(2)
+            elif waits == 2:
+                log("step %d: privacy pane; scrolling back up then down" % step)
+                for _ in range(6):
+                    screen.scroll(960, 550, 3)
+                    time.sleep(0.5)
+                time.sleep(2)
             else:
-                log("step %d: privacy pane still there; clicking inside its window" % step)
-                screen.click(900, 400)
+                log("step %d: privacy pane; clicking Continue at (1300,800)" % step)
+                screen.click(1300, 800)
                 time.sleep(10)
                 main.privacy_waits = 0
             continue
