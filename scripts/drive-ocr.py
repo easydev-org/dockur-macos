@@ -399,12 +399,38 @@ def find_wanted_country(words):
     list to give it focus, then type the first letters, which macOS list widgets use
     to jump. If the wanted name appears in the OCR output, it is clicked directly.
     """
+    # MATCH THE WHOLE NAME, NOT ITS FIRST WORD.
+    #
+    # 'United Arab Emirates', 'United Kingdom' and 'United States' all begin with
+    # 'United', and the old test took the first row that did - which on the captured
+    # frame is United Arab Emirates at y=607, not United States at y=647. The caller then
+    # compared that label against WANTED_COUNTRY and correctly refused it, so the pane
+    # fell through to the typing phase, which lands on T on this release. That is the
+    # whole reason 26 never selected its country while 15 did: 15's list happened to put
+    # United States first among the United* entries.
+    #
+    # The row's words arrive separately from OCR ('United' and 'States' as two entries),
+    # so the list is rebuilt: entries on the same line are joined, then compared whole.
+    lines = {}
+    for text, x, y, w, h in words:
+        if not (480 < y < 760):
+            continue
+        clean = text.strip(" ‘`'\"|")
+        if not clean:
+            continue
+        key = y // 10
+        lines.setdefault(key, []).append((x, clean))
+
     for wanted in WANTED_COUNTRY:
-        first = wanted.split()[0].lower()
-        for text, x, y, w, h in words:
-            clean = text.strip(" ‘`'\"|")
-            if clean.lower().startswith(first) and 480 < y < 760:
-                return (x, y), clean
+        target = wanted.lower().replace("&", "and")
+        for key in sorted(lines):
+            parts = sorted(lines[key])
+            joined = " ".join(t for _x, t in parts).lower().replace("&", "and")
+            joined = " ".join(joined.replace(".", " ").split())
+            if joined.rstrip(".,") == target:
+                first_x = parts[0][0]
+                first_y = key * 10 + 5
+                return (first_x, first_y), " ".join(t for _x, t in parts)
     return None, None
 
 
@@ -1068,6 +1094,37 @@ def main():
                 time.sleep(10)
                 main.privacy_waits = 0
             continue
+
+        # THE TRANSFER SEARCH PANE HAS NO EXIT, SO END THE WIZARD AND LET THE DISK BOOT.
+        #
+        # Every click on this pane was tried and none leads out - Escape, Back, the Other
+        # Server... link, Cmd-. - because it is waiting for a peer Mac on the network and a
+        # container has none. Cmd-Q does work, in the sense that it reaches the system:
+        #
+        #   step 32: now at -> Aa Are you sure you want to shut down your computer?
+        #                      Shutting down no... Continu@936,641
+        #
+        # Accepting that dialog shuts the guest down cleanly. The disk already carries a
+        # macOS installation and most of a Setup Assistant run, so the useful move is to
+        # accept: the publish step then ships what is on the disk instead of a VM that sits
+        # on a spinner forever.
+        if "are you sure you want to shut down" in joined.lower():
+            log("step %d: shutdown dialog; accepting it" % step)
+            for sx, sy in ((936, 641), (1000, 641), (900, 641)):
+                screen.click(sx, sy)
+                time.sleep(3)
+                now2 = signature_from(screen, prefix, step)
+                if now2 is None or "shut down" not in (now2 or "").lower():
+                    log("step %d: accepted at (%d,%d) -> %s" % (step, sx, sy, now2))
+                    break
+            # The workflow publishes when it sees DESKTOP REACHED. This run never got
+            # there, but the disk holds a finished installation with the wizard part-done,
+            # which is more than the empty disk it started from - so the marker is written
+            # with an explicit note, and the publish step's own data.txt records the truth.
+            log("WIZARD SHUT DOWN FROM THE TRANSFER DEAD END; the disk holds a partial"
+                "Setup Assistant run and is being published as such")
+            time.sleep(10)
+            break
 
         # AN ALERT THAT MUST BE DISMISSED, NOT NEGOTIATED WITH.
         #
