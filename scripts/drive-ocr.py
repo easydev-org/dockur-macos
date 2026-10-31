@@ -993,6 +993,38 @@ def main():
         # alone clicked Back, which returned to Data & Privacy, whose Continue walked
         # straight back into this pane - steps 9 and 10 of the last run repeat that
         # pair exactly. "Not now" declines the whole migration.
+        # THE PRIVACY PANE IS INFORMATION, NOT A CHOICE.
+        #
+        # Every word below y=600 on it is prose, and the only control in the whole frame
+        # is the 'Learn More...' link at (812,706):
+        #
+        #   is designed to minimize the collection ... your information.
+        #   @ Learn More...               (742..812, 706)
+        #
+        # Clicking the primary position (1306,810) on this pane hits whatever is behind
+        # the window, and Tahoe answers 'Unable to Pair Computers' - 52 of those in one
+        # run. Return does the same. The pane has no forward control because it does not
+        # need one: it is shown while the wizard prepares the next step, and it advances
+        # on its own.
+        #
+        # So: leave it alone and wait. If it has not moved after a few passes, click once
+        # inside its own window (well above the link) and wait again.
+        if ("data & privacy" in joined.lower()
+                and "learn more" in joined.lower()
+                and "continue" not in joined.lower()
+                and "back" not in joined.lower()):
+            waits = getattr(main, "privacy_waits", 0) + 1
+            main.privacy_waits = waits
+            if waits <= 3:
+                log("step %d: privacy pane has no control; waiting (%d)" % (step, waits))
+                time.sleep(12)
+            else:
+                log("step %d: privacy pane still there; clicking inside its window" % step)
+                screen.click(900, 400)
+                time.sleep(10)
+                main.privacy_waits = 0
+            continue
+
         # AN ALERT THAT MUST BE DISMISSED, NOT NEGOTIATED WITH.
         #
         # 26 walked into the pairing flow - "This Mac could not be paired with the
