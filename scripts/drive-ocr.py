@@ -982,10 +982,23 @@ def main():
         # has exactly one button and the keyboard dismisses it; nothing in the list of
         # button labels matches, which is why the generic search found nothing.
         if "unable to pair" in joined.lower():
-            log("step %d: pairing alert; pressing Return to dismiss" % step)
+            # Dismissing this alert returns to Data & Privacy, whose primary button walks
+            # straight back into the pairing attempt:
+            #
+            #   step 28: pairing alert; pressing Return to dismiss
+            #   step 28: after Return -> a Data & Privacy
+            #   step 29: no button; clicking the primary button position
+            #   step 29: that advanced the pane -> Unable to Pair Computers
+            #
+            # So Return alone is not an exit. After dismissing, Escape is sent as well -
+            # the wizard treats it as "leave this optional flow" - and only then is the
+            # pane re-read. The attempt counter keeps the pair from repeating forever.
+            log("step %d: pairing alert; dismissing with Return then Esc" % step)
             screen.key("ret")
-            time.sleep(4)
-            log("step %d: after Return -> %s"
+            time.sleep(3)
+            screen.key("esc")
+            time.sleep(5)
+            log("step %d: after Return+Esc -> %s"
                 % (step, signature_from(screen, prefix, step)))
             continue
 
@@ -1432,7 +1445,28 @@ def main():
             # Feedback", "Hover Text" - because clicking a category card opens that
             # category rather than advancing the wizard. The pane's own forward
             # control was there all along, in the usual place.
-            log("step %d: no button; clicking the primary button position" % step)
+            # A PANE WITH NO BUTTON IS A PANE RETURN ADVANCES.
+            #
+            # 26's Data & Privacy pane has no Back and no Continue - the crop shows the
+            # title, five lines of prose, and "Learn More...". Clicking the primary
+            # button position on it hit whatever is at (1306,810), which on this release
+            # is inside the pane's own content, and Tahoe answered with "Unable to Pair
+            # Computers":
+            #
+            #   step 33: no button; clicking the primary button position
+            #   step 33: that advanced the pane -> Unable to Pair Computers
+            #
+            # Seven of those alerts in one run. Return is the wizard's default action and
+            # costs nothing when a primary button exists, so it goes first and the click
+            # stays as the fallback.
+            log("step %d: no button; pressing Return first" % step)
+            screen.key("ret")
+            time.sleep(6)
+            advanced = signature_from(screen, prefix, step)
+            if advanced is not None and advanced != shortened:
+                log("step %d: Return advanced the pane -> %s" % (step, advanced))
+                continue
+            log("step %d: Return did nothing; clicking the primary button position" % step)
             screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
             time.sleep(9)
             after = signature_from(screen, prefix, step)
