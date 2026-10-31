@@ -900,26 +900,68 @@ def main():
                     # a partially received string looks like in this widget.
                     time.sleep(0.3)
                 time.sleep(2)
-                # Check where the list actually landed before committing to a row.
-                # WHERE THE LIST LANDED IS NOT VERIFIED HERE.
+                # FIVE PAGES DOWN, THEN ONE BACK.
                 #
-                # This used to call signature_from() inside a 24-pass Page Down loop, and
-                # on 26 the log stopped dead at 'list after typing -> ...' for over
-                # twenty minutes while the job stayed in progress: a screendump that does
-                # not return leaves the whole driver parked inside one OCR call.
+                # Six presses overran the target: the list came to rest on Uruguay / US
+                # Outlying Islands / US Virgin Islands / Uzbekistan, with United States
+                # just above the visible band, so find_wanted_country found nothing and
+                # the pane fell through to clicking arbitrary rows again:
                 #
-                # The typing jump lands on T on both 26 and 15 - measured twice - so a
-                # fixed number of Page Downs is what is needed, with no reads in between.
-                # Down then commits whatever the list is showing, and the click phase
-                # takes it from there.
-                log("step %d: paging down to the U section" % step)
-                for _ in range(6):
+                #   step 13: paging down to the U section
+                #   step 14: Select Your Country or Region Uruguay Islands: US Virgin ...
+                #   step 14: Continue not enabled; clicking row 'Vietnam' at (768,609)
+                #
+                # Four pages down and one back leaves United States on screen; the
+                # retry reads the pane and clicks the row by name, which is the branch
+                # that works when the name is visible.
+                log("step %d: paging to the U section" % step)
+                for _ in range(5):
                     screen.key("pgdn")
                     time.sleep(0.8)
+                screen.key("pgup")
+                time.sleep(1.0)
                 # Down commits the selection to the matched row.
                 screen.key("down")
                 time.sleep(2)
                 main.country_phase = "click"
+                continue
+
+            # CLICK PHASE: LOOK FOR THE COUNTRY BY NAME FIRST.
+            #
+            # The type phase leaves the list scrolled to the U section, and the row to
+            # click is on screen - but nothing here was looking for it. The code went
+            # straight to find_button(words), which finds Continue only once a row is
+            # selected, and then to an arbitrary middle row. On 26 that produced
+            #
+            #   step 14: Continue not enabled; clicking row 'Vietnam' at (768,609)
+            #
+            # with United States sitting a few pixels above. This is the branch that has
+            # to run.
+            wanted_pt, wanted_label = find_wanted_country(words)
+            if wanted_pt is not None:
+                log("step %d: clicking country %r at %s" % (step, wanted_label, wanted_pt))
+                screen.click(wanted_pt[0], wanted_pt[1])
+                time.sleep(3)
+                after_pick = signature_from(screen, prefix, step)
+                log("step %d: after choosing %r -> %s" % (step, wanted_label, after_pick))
+                btn, label = find_button(screen.text(
+                    screen.grab("%s-s%d-country" % (prefix, step))))
+                if btn is not None:
+                    log("step %d: clicking %r at %s" % (step, label, btn))
+                    screen.click(btn[0], btn[1])
+                    time.sleep(8)
+                    main.country_phase = None
+                    continue
+                # No button yet: press Return, which commits a list selection here.
+                screen.key("ret")
+                time.sleep(4)
+                btn, label = find_button(screen.text(
+                    screen.grab("%s-s%d-countryret" % (prefix, step))))
+                if btn is not None:
+                    log("step %d: Return enabled it; clicking %r at %s" % (step, label, btn))
+                    screen.click(btn[0], btn[1])
+                    time.sleep(8)
+                main.country_phase = None
                 continue
 
             target, label = find_button(words)
