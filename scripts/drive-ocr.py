@@ -682,9 +682,20 @@ def main():
     log("qmp connected")
 
     def signature_from(_mon, _prefix, step):
-        """Read the pane's text again, for comparing before and after a click."""
-        again = screen.grab("%s-s%02d-after" % (prefix, step))
-        words = screen.text(again)
+        """Read the pane's text again, for comparing before and after a click.
+
+        Failures return None rather than propagating. A screendump that times out on the
+        QMP socket raises socket.timeout out of qmp.execute, and that used to kill the
+        whole driver: 26's log stopped mid-pane and the job sat in progress for twenty
+        minutes with nothing more to say. A read that fails is the same as a read that
+        returned nothing, as far as every caller here is concerned.
+        """
+        try:
+            again = screen.grab("%s-s%02d-after" % (prefix, step))
+            words = screen.text(again)
+        except Exception as exc:
+            log("read failed at step %d: %s" % (step, exc))
+            return None
         return (" ".join(w[0] for w in words)[:70]) or None
 
     # Let the guest finish drawing before the first read; OCR on a half-drawn pane
@@ -700,9 +711,17 @@ def main():
     previous = None
     stuck = 0
 
-    for step in range(1, 45):
-        png = screen.grab("%s-s%02d" % (prefix, step))
-        words = screen.text(png)
+    # 90 steps, not 45. 15 needed 44 to reach the desktop only because it kept re-reading
+    # panes it had already handled; 26 has been seen at step 40 still working through the
+    # transfer stack. A read that fails now costs one step instead of the whole run.
+    for step in range(1, 90):
+        try:
+            png = screen.grab("%s-s%02d" % (prefix, step))
+            words = screen.text(png)
+        except Exception as exc:
+            log("step %d: read failed (%s); retrying" % (step, exc))
+            time.sleep(5)
+            continue
         joined = " ".join(w[0] for w in words)
         shortened = joined[:70]
         log("step %d: %s" % (step, shortened or "(nothing readable)"))
@@ -850,21 +869,21 @@ def main():
                     time.sleep(0.3)
                 time.sleep(2)
                 # Check where the list actually landed before committing to a row.
-                landed = signature_from(screen, prefix, step)
-                log("step %d: list after typing -> %s" % (step, landed))
-                want = WANTED_COUNTRY[0].split()[0].lower()[:4]
-                if landed is None or want not in (landed or "").lower():
-                    # The jump missed. Page down until the first letters appear, which
-                    # is how this list is meant to be traversed by hand.
-                    for _ in range(24):
-                        screen.key("pgdn")
-                        time.sleep(1.2)
-                        seen = (signature_from(screen, prefix, step) or "").lower()
-                        if want in seen:
-                            log("step %d: list reached %r by paging" % (step, want))
-                            break
-                    else:
-                        log("step %d: paging never reached %r" % (step, want))
+                # WHERE THE LIST LANDED IS NOT VERIFIED HERE.
+                #
+                # This used to call signature_from() inside a 24-pass Page Down loop, and
+                # on 26 the log stopped dead at 'list after typing -> ...' for over
+                # twenty minutes while the job stayed in progress: a screendump that does
+                # not return leaves the whole driver parked inside one OCR call.
+                #
+                # The typing jump lands on T on both 26 and 15 - measured twice - so a
+                # fixed number of Page Downs is what is needed, with no reads in between.
+                # Down then commits whatever the list is showing, and the click phase
+                # takes it from there.
+                log("step %d: paging down to the U section" % step)
+                for _ in range(6):
+                    screen.key("pgdn")
+                    time.sleep(0.8)
                 # Down commits the selection to the matched row.
                 screen.key("down")
                 time.sleep(2)
