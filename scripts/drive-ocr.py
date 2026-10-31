@@ -1287,24 +1287,33 @@ def main():
                     # Those rows are clickable detail entries. Opening one and closing it is
                     # the only interaction left that this pane can be waiting on, and it
                     # costs nothing to try before pressing a disabled button again.
-                    rows_here = find_list_rows(words)
-                    tried = getattr(main, "privacy_row", 0)
-                    if rows_here and tried < len(rows_here):
-                        target_row = rows_here[tried]
-                        main.privacy_row = tried + 1
-                        log("step %d: privacy pane; opening row %r at %s [%d/%d]"
-                            % (step, target_row[1], target_row[0], tried + 1, len(rows_here)))
-                        screen.click(target_row[0][0], target_row[0][1])
-                        time.sleep(6)
-                        log("step %d: after opening it -> %s"
-                            % (step, signature_from(screen, prefix, step)))
-                        screen.key("esc")
-                        time.sleep(3)
-                        main.privacy_waits = 0
-                        continue
-                    log("step %d: every row tried; clicking the measured pill" % step)
-                    main.privacy_row = 0
-                    screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
+                    # TAB TO THE BUTTON.
+                    #
+                    # Clicking rows was tried and they are not rows: find_list_rows
+                    # returned prose ('Apple' at (757,614)), and opening it changed
+                    # nothing. What is left is the focus ring - macOS moves it with Tab,
+                    # and a focused control activates with Space or Return. That reaches
+                    # buttons a click cannot, because a disabled-looking control that is
+                    # actually focusable is exactly what a keyboard is for.
+                    log("step %d: privacy pane; tabbing through its controls" % step)
+                    for tabn in range(1, 9):
+                        screen.key("tab")
+                        time.sleep(0.8)
+                        shot2 = screen.grab("%s-s%d-tab%d" % (prefix, step, tabn))
+                        spot2 = find_blue_button(shot2)
+                        if spot2 is not None:
+                            log("step %d: blue control appeared at %s after %d tabs"
+                                % (step, spot2, tabn))
+                            screen.click(spot2[0], spot2[1])
+                            time.sleep(9)
+                            break
+                    else:
+                        log("step %d: no blue after tabbing; pressing Space at the ring" % step)
+                    screen.key("spc")
+                    time.sleep(6)
+                    log("step %d: after tabbing -> %s"
+                        % (step, signature_from(screen, prefix, step)))
+                    main.privacy_waits = 0
                 time.sleep(10)
                 main.privacy_waits = 0
             continue
