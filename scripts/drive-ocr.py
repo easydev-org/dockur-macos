@@ -876,6 +876,32 @@ def main():
                 main.country_phase = None
                 continue
 
+            # Down already committed a row in the type phase. Press Return and look for a
+            # button again BEFORE touching the list, because clicking another row in this
+            # widget MOVES the selection and greys Continue back out:
+            #
+            #   step 13: Continue not enabled; clicking row 'Vietnam' at (768,609)
+            #   step 13: after choosing a row -> ... Uruguay US Outlying Islands ...
+            #   step 13: still no button after choosing a row
+            #
+            # The list is scrolled to the U section by then, which is the evidence that
+            # the type phase worked; it is the extra click that undoes it.
+            if not getattr(main, "country_returned", False):
+                main.country_returned = True
+                screen.key("ret")
+                time.sleep(3)
+                again = screen.text(screen.grab("%s-s%d-afterret" % (prefix, step)))
+                btn2, label2 = find_button(again)
+                if btn2 is not None:
+                    log("step %d: Return enabled the button; clicking %r at %s"
+                        % (step, label2, btn2))
+                    screen.click(btn2[0], btn2[1])
+                    time.sleep(8)
+                    main.country_phase = None
+                    main.country_returned = False
+                    continue
+                log("step %d: Return did not enable it; falling back to a row click" % step)
+
             # Continue is not enabled, so nothing is selected. Click a row that is
             # definitely visible - the middle of the list - which enables it, and then
             # click Continue IN THE SAME STEP.
