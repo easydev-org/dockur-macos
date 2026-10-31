@@ -942,7 +942,17 @@ def main():
             # to run.
             wanted_pt, wanted_label = find_wanted_country(words)
             if wanted_pt is not None:
-                log("step %d: clicking country %r at %s" % (step, wanted_label, wanted_pt))
+                # NOT A CLICK. The keyboard navigation below is what moves the selection;
+                # a click here re-selects whatever row sits under the coordinate and undoes
+                # the work. The log showed exactly that:
+                #
+                #   step 17: highlight reached 'United States' after 1 steps
+                #   step 17: after choosing 'United Kingdom.' -> Select Your Country ...
+                #
+                # The highlight had reached United States, then a click at y=627 put it back
+                # on United Kingdom.
+                log("step %d: country %r is on screen at %s; walking to it with the keyboard"
+                    % (step, wanted_label, wanted_pt))
                 # CLICK THE ROW, NOT JUST THE TEXT.
                 #
                 # Every click so far landed on the label's own glyphs - x=764 is the middle
@@ -967,8 +977,9 @@ def main():
                 # it at the top of the visible band, then step down while the OCR name of
                 # the highlighted row becomes 'United States'.
                 #
-                # Clicking once first simply gives the list keyboard focus.
-                screen.click(wanted_pt[0], wanted_pt[1])
+                # One click gives the list keyboard focus; it deliberately does not aim at
+                # any particular row.
+                screen.click(760, wanted_pt[1])
                 time.sleep(1)
                 screen.key("home")
                 time.sleep(1)
