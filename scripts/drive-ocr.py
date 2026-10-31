@@ -1128,8 +1128,14 @@ def main():
                 else:
                     screen.click(OTHER_SERVER_BUTTON[0], OTHER_SERVER_BUTTON[1])
                 time.sleep(8)
-            log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
-            main.subpane_tries = 0
+            now_at = signature_from(screen, prefix, step)
+            log("step %d: now at -> %s" % (step, now_at))
+            # NO RESET HERE. Resetting the counter on every pass meant 'tries' was always
+            # 0, so Escape was the only exit ever tried - 26 pressed it at steps 28, 29,
+            # 33, 39 and 40 and never reached the second or third option. The counter is
+            # cleared when the pane finally changes, below, not when this branch ends.
+            if now_at is not None and "other server" not in (now_at or "").lower():
+                main.subpane_tries = 0
             continue
 
         if ("transfer your data" in joined.lower()
