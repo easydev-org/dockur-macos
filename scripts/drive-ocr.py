@@ -1043,6 +1043,25 @@ def main():
                     screen.scroll(960, 550, 3)
                     time.sleep(0.5)
                 time.sleep(2)
+            elif waits == 3:
+                # CONTINUE IS DISABLED, AND SCROLLING DOES NOT ENABLE IT.
+                #
+                # Reading the button out of the frame by colour settles it: the pill at
+                # x=1214..1338, y=786..818 is (224,224,224) with (0,0,0) lettering and
+                # there is not one blue pixel in the whole region - a macOS primary button
+                # that is enabled is blue. So the click was landing on a disabled button,
+                # passing through to whatever sits behind the window, and Tahoe answered
+                # 'Unable to Pair Computers'. That is why moving the coordinate by 31px
+                # changed nothing.
+                #
+                # The one control this pane actually offers is 'Learn More...' at
+                # (812,706). Opening and closing it is the only reading-related action
+                # left, and a wizard commonly enables its forward button once such a link
+                # has been visited.
+                log("step %d: privacy pane; opening Learn More at (812,706)" % step)
+                screen.click(812, 706)
+                time.sleep(8)
+                log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
             else:
                 log("step %d: privacy pane; clicking Continue at %s" % (step, PRIVACY_CONTINUE))
                 screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
