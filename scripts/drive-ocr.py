@@ -971,6 +971,21 @@ def main():
         # alone clicked Back, which returned to Data & Privacy, whose Continue walked
         # straight back into this pane - steps 9 and 10 of the last run repeat that
         # pair exactly. "Not now" declines the whole migration.
+        # AN ALERT THAT MUST BE DISMISSED, NOT NEGOTIATED WITH.
+        #
+        # 26 walked into the pairing flow - "This Mac could not be paired with the
+        # computer" - at step 15 and was still there at step 34, nineteen steps of
+        # clicking rows named 'Try' and 'This' that are body text in the alert. An alert
+        # has exactly one button and the keyboard dismisses it; nothing in the list of
+        # button labels matches, which is why the generic search found nothing.
+        if "unable to pair" in joined.lower():
+            log("step %d: pairing alert; pressing Return to dismiss" % step)
+            screen.key("ret")
+            time.sleep(4)
+            log("step %d: after Return -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
+
         if "not now" in joined.lower() and "transfer" in joined.lower():
             log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
             screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
