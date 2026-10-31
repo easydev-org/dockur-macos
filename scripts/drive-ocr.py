@@ -1276,7 +1276,34 @@ def main():
                     log("step %d: blue button at %s; clicking" % (step, spot))
                     screen.click(spot[0], spot[1])
                 else:
-                    log("step %d: no blue button found; clicking the measured pill anyway" % step)
+                    # NO BLUE ANYWHERE, AFTER SCROLLING TO THE END - so the button is not
+                    # hidden, it is genuinely disabled, and this pane is waiting on
+                    # something in its own content. The pane lists topics that 14 and 15 do
+                    # not carry:
+                    #
+                    #   Data & Privacy
+                    #   Advanced Data Protection    Age Range for Apps    AirDrop    ...
+                    #
+                    # Those rows are clickable detail entries. Opening one and closing it is
+                    # the only interaction left that this pane can be waiting on, and it
+                    # costs nothing to try before pressing a disabled button again.
+                    rows_here = find_list_rows(words)
+                    tried = getattr(main, "privacy_row", 0)
+                    if rows_here and tried < len(rows_here):
+                        target_row = rows_here[tried]
+                        main.privacy_row = tried + 1
+                        log("step %d: privacy pane; opening row %r at %s [%d/%d]"
+                            % (step, target_row[1], target_row[0], tried + 1, len(rows_here)))
+                        screen.click(target_row[0][0], target_row[0][1])
+                        time.sleep(6)
+                        log("step %d: after opening it -> %s"
+                            % (step, signature_from(screen, prefix, step)))
+                        screen.key("esc")
+                        time.sleep(3)
+                        main.privacy_waits = 0
+                        continue
+                    log("step %d: every row tried; clicking the measured pill" % step)
+                    main.privacy_row = 0
                     screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
                 time.sleep(10)
                 main.privacy_waits = 0
