@@ -419,18 +419,21 @@ def find_wanted_country(words):
         if not clean:
             continue
         key = y // 10
-        lines.setdefault(key, []).append((x, clean))
+        lines.setdefault(key, []).append((x, y, clean))
 
     for wanted in WANTED_COUNTRY:
         target = wanted.lower().replace("&", "and")
         for key in sorted(lines):
             parts = sorted(lines[key])
-            joined = " ".join(t for _x, t in parts).lower().replace("&", "and")
+            joined = " ".join(t for _x, _y, t in parts).lower().replace("&", "and")
             joined = " ".join(joined.replace(".", " ").split())
             if joined.rstrip(".,") == target:
+                # Use the row's own y, not the bucket's: y // 10 loses up to 9px, and the
+                # click has to land on a 20px text line. The first attempt returned 615 for
+                # a row whose text sits at 647, which is two rows away.
                 first_x = parts[0][0]
-                first_y = key * 10 + 5
-                return (first_x, first_y), " ".join(t for _x, t in parts)
+                first_y = parts[0][1]
+                return (first_x, first_y), " ".join(t for _x, _y, t in parts)
     return None, None
 
 
