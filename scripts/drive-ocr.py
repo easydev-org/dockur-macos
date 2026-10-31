@@ -951,14 +951,41 @@ def main():
                 # row is the full width of the list box, and its selectable part is the
                 # empty space to the left of the text as much as the text itself. Clicking
                 # at the row's own y but well inside the list box is the reliable target.
-                for cx in (wanted_pt[0], 700, 660):
-                    screen.click(cx, wanted_pt[1])
-                    time.sleep(1.2)
-                # Down commits whatever the list now has highlighted; on a click that did
-                # not take, it at least moves the highlight into the list so Return and
-                # Continue have something to act on.
-                screen.key("down")
-                time.sleep(2)
+                # KEYBOARD ONLY. THE MOUSE DOES NOT SELECT ANYTHING ON THIS LIST.
+                #
+                # Five clicks per pass - the label's centre, 700, 660, twice over - plus
+                # Down left the pane exactly as it was, and the only thing that changed
+                # between passes was which row the driver believed it had clicked:
+                #
+                #   step 18: clicking country 'United States' at (764, 615)
+                #   step 19: clicking country 'United Kingdom' at (764, 595)
+                #   step 20: clicking country 'United States' at (764, 615)
+                #
+                # A table view that ignores mouse events is not something to keep poking.
+                # The list is already scrolled to the U section, so the wanted row is a
+                # short walk from wherever the highlight currently sits: press Home to put
+                # it at the top of the visible band, then step down while the OCR name of
+                # the highlighted row becomes 'United States'.
+                #
+                # Clicking once first simply gives the list keyboard focus.
+                screen.click(wanted_pt[0], wanted_pt[1])
+                time.sleep(1)
+                screen.key("home")
+                time.sleep(1)
+                for stepdown in range(14):
+                    screen.key("down")
+                    time.sleep(0.9)
+                    seen = screen.text(screen.grab("%s-s%d-nav%d"
+                                                   % (prefix, step, stepdown)))
+                    picked2, label2 = find_wanted_country(seen)
+                    if picked2 is not None:
+                        log("step %d: highlight reached %r after %d steps"
+                            % (step, label2, stepdown + 1))
+                        break
+                    else:
+                        log("step %d: nav %d -> not there yet" % (step, stepdown + 1))
+                screen.key("ret")
+                time.sleep(4)
                 after_pick = signature_from(screen, prefix, step)
                 log("step %d: after choosing %r -> %s" % (step, wanted_label, after_pick))
                 btn, label = find_button(screen.text(
