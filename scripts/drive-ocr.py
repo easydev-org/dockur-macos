@@ -1044,7 +1044,7 @@ def main():
                     time.sleep(0.5)
                 time.sleep(2)
             else:
-                log("step %d: privacy pane; clicking Continue at (1300,800)" % step)
+                log("step %d: privacy pane; clicking Continue at %s" % (step, PRIVACY_CONTINUE))
                 screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
                 time.sleep(10)
                 main.privacy_waits = 0
@@ -1140,7 +1140,14 @@ def main():
             # 0, so Escape was the only exit ever tried - 26 pressed it at steps 28, 29,
             # 33, 39 and 40 and never reached the second or third option. The counter is
             # cleared when the pane finally changes, below, not when this branch ends.
-            if now_at is not None and "other server" not in (now_at or "").lower():
+            # Reset only when the wizard has LEFT the transfer family of panes entirely.
+            #
+            # Testing for 'other server' was too strict: Escape from this sub-pane lands on
+            # 'Transfer Your Data to This Mac Select a Mac, Time Machine backup...', which
+            # does not carry that link, so the counter was cleared on what looked like a
+            # pane change and the next pass started at zero again. The log shows Escape at
+            # steps 24, 25, 31 and 32 - always the first option, never the second.
+            if now_at is not None and "transfer" not in (now_at or "").lower():
                 main.subpane_tries = 0
             continue
 
