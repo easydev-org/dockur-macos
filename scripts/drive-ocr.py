@@ -943,8 +943,22 @@ def main():
             wanted_pt, wanted_label = find_wanted_country(words)
             if wanted_pt is not None:
                 log("step %d: clicking country %r at %s" % (step, wanted_label, wanted_pt))
-                screen.click(wanted_pt[0], wanted_pt[1])
-                time.sleep(3)
+                # CLICK THE ROW, NOT JUST THE TEXT.
+                #
+                # Every click so far landed on the label's own glyphs - x=764 is the middle
+                # of 'United States' - and the selection did not move: nine passes alternated
+                # between United States and United Kingdom with the pane unchanged. A list
+                # row is the full width of the list box, and its selectable part is the
+                # empty space to the left of the text as much as the text itself. Clicking
+                # at the row's own y but well inside the list box is the reliable target.
+                for cx in (wanted_pt[0], 700, 660):
+                    screen.click(cx, wanted_pt[1])
+                    time.sleep(1.2)
+                # Down commits whatever the list now has highlighted; on a click that did
+                # not take, it at least moves the highlight into the list so Return and
+                # Continue have something to act on.
+                screen.key("down")
+                time.sleep(2)
                 after_pick = signature_from(screen, prefix, step)
                 log("step %d: after choosing %r -> %s" % (step, wanted_label, after_pick))
                 btn, label = find_button(screen.text(
