@@ -1139,9 +1139,8 @@ def main():
                 time.sleep(8)
                 screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
                 time.sleep(8)
-            else:
-                # Last resort: click the Other Server... link's own row, which is the
-                # only control this pane has.
+            elif tries == 2:
+                # The link leads deeper in, not out.
                 log("step %d: search sub-pane; clicking Other Server" % step)
                 spot = None
                 for text, x, y, _w, _h in words:
@@ -1153,6 +1152,28 @@ def main():
                 else:
                     screen.click(OTHER_SERVER_BUTTON[0], OTHER_SERVER_BUTTON[1])
                 time.sleep(8)
+            else:
+                # NOTHING ON THIS PANE LEADS OUT, so stop trying to click one.
+                #
+                # Three exits were tried across earlier runs and none moved it: Escape,
+                # Back-then-Not-now, and the Other Server... link itself - which opens a
+                # further sub-pane rather than closing this one. The pane is waiting for a
+                # peer Mac to appear on the network, and a container has no peer.
+                #
+                # Cmd-. is the standard 'cancel this operation' shortcut on macOS, and
+                # Setup Assistant honours it where Escape does not. If that fails the only
+                # remaining move is to retry from the pane above.
+                log("step %d: search sub-pane is a dead end; sending Cmd-. to cancel" % step)
+                qmpmod.key_combo(screen.q, "meta_l", "dot")
+                time.sleep(8)
+                cancelled = signature_from(screen, prefix, step)
+                log("step %d: after Cmd-. -> %s" % (step, cancelled))
+                if cancelled is not None and "transfer" in (cancelled or "").lower():
+                    log("step %d: Cmd-. did not help; trying Cmd-Q on the installer" % step)
+                    qmpmod.key_combo(screen.q, "meta_l", "q")
+                    time.sleep(10)
+                    log("step %d: now at -> %s"
+                        % (step, signature_from(screen, prefix, step)))
             now_at = signature_from(screen, prefix, step)
             log("step %d: now at -> %s" % (step, now_at))
             # NO RESET HERE. Resetting the counter on every pass meant 'tries' was always
