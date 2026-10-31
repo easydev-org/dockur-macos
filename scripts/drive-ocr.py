@@ -267,6 +267,72 @@ BUTTONS = ("continue", "continue with an apple account", "agree", "accept",
 # something that only a control would say.
 
 
+def _read_ppm_file(path):
+    """Load a P6 PPM as (w, h, bytes); None if the file is not one."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.readline().strip() != b"P6":
+                return None
+            line = fh.readline()
+            while line.startswith(b"#"):
+                line = fh.readline()
+            w, h = map(int, line.split())
+            fh.readline()
+            return w, h, fh.read()
+    except (OSError, ValueError):
+        return None
+
+
+def find_blue_button(ppm):
+    """Centre of the largest blue region in the lower part of a frame.
+
+    A macOS primary button is filled with the accent colour, blue by default, which is
+    unmistakable against a grey pane. 26's privacy pill measured (224,224,224) with zero
+    blue pixels - disabled - and no amount of clicking a disabled control advances the
+    wizard. Once the pane is scrolled and the button enables it turns blue, and that is a
+    colour test rather than a label test: no OCR needed, no coordinate to get wrong.
+
+    Returns None when nothing blue is found, so the caller can fall back.
+    """
+    got = _read_ppm_file(ppm)
+    if not got:
+        return None
+    w, h, data = got
+    best = None
+    used = set()
+    for y in range(int(h * 0.55), h, 4):
+        for x in range(0, w, 4):
+            i = (y * w + x) * 3
+            if i + 2 >= len(data):
+                continue
+            r, g, b = data[i], data[i + 1], data[i + 2]
+            if not (b > 150 and b - r > 60 and b - g > 30):
+                continue
+            key = (x // 60, y // 60)
+            if key in used:
+                continue
+            used.add(key)
+            sx = sy = n = 0
+            for yy in range(y, min(y + 60, h), 4):
+                for xx in range(x, min(x + 60, w), 4):
+                    j = (yy * w + xx) * 3
+                    if j + 2 < len(data) and data[j + 2] > 150 and data[j + 2] - data[j] > 60:
+                        sx += xx
+                        sy += yy
+                        n += 1
+            # THE THRESHOLD HAS TO SEPARATE A FILLED BUTTON FROM A TEXT LINK.
+            #
+            # 'Learn More...' on this very pane is drawn in the accent colour - measured
+            # (0,104,218) - so a loose blue test finds it and calls it a button. What
+            # distinguishes a filled control is AREA: the link occupied 33 sampled pixels
+            # in a 60x60 window, a filled pill the size of Continue's (124x32) covers
+            # several hundred. 120 is comfortably above any glyph cluster and below a
+            # button at this sampling step.
+            if n >= 120 and (best is None or n > best[0]):
+                best = (n, sx // n, sy // n)
+    return (best[1], best[2]) if best else None
+
+
 def find_button(words):
     """Pick a control, preferring the lower-right corner where Continue lives.
 
@@ -1186,8 +1252,32 @@ def main():
                 time.sleep(8)
                 log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
             else:
-                log("step %d: privacy pane; clicking Continue at %s" % (step, PRIVACY_CONTINUE))
-                screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
+                # THE BUTTON MOVES ON THIS RELEASE.
+                #
+                # 26's privacy pane carries a list 14 and 15 do not have - Advanced Data
+                # Protection, Age Range for Apps, AirDrop - so the pane is longer and its
+                # Continue is not where the captured short version put it:
+                #
+                #   x=1214..1338, y=786..818   (224,224,224), zero blue pixels
+                #
+                # That rectangle is the disabled pill from the SHORT pane. On the long one
+                # the forward button sits lower, or the pane has to be scrolled before it
+                # exists at all. So: scroll to the very end, then look for a blue button
+                # anywhere on the bottom band - blue is the colour of an enabled primary
+                # control and needs no OCR to find.
+                log("step %d: privacy pane; scrolling to its end, then hunting for a blue button" % step)
+                for _ in range(10):
+                    screen.scroll(960, 550, 4)
+                    time.sleep(0.6)
+                time.sleep(2)
+                shot = screen.grab("%s-s%d-bluehunt" % (prefix, step))
+                spot = find_blue_button(shot)
+                if spot is not None:
+                    log("step %d: blue button at %s; clicking" % (step, spot))
+                    screen.click(spot[0], spot[1])
+                else:
+                    log("step %d: no blue button found; clicking the measured pill anyway" % step)
+                    screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
                 time.sleep(10)
                 main.privacy_waits = 0
             continue
