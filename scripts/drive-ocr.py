@@ -931,38 +931,37 @@ def main():
 
         target, label = find_button(words)
 
-        # The migration pane has three controls on its button row:
+        # "Not now" ON THIS PANE IS THE WAY PAST IT, and its presence is what
+        # separates the pane from the search sub-pane that shares its title.
         #
-        #   Not now (604,810) | Back (1220,810) | Continue (1306,810)
+        # The frame reads:
         #
-        # Continue opens the transfer sub-pane, which searches the network for a peer
-        # Mac and never finds one - a dead end that consumed many runs. "Not now" is
-        # the control that declines the whole migration, and it is a plain text button
-        # on the left, so OCR does not return it as a label and the position rule does
-        # not reach it either.
+        #   Not now    Transfer information to this Mac
+        #              Select a Mac, Time Machine backup, or startup disk ...
+        #              Other Server...
+        #              [Not now (604,810)] [Back (1220,810)] [Continue (1306,810)]
         #
-        # Reading the pane as a screenshot is what found it: the three labels are
-        # legible in the image and invisible in the text extraction.
-        # THE TRANSFER PANE COMES FIRST, and its own title is what identifies it.
+        # Both 'Other Server...' and 'Not now' appear here, so keying on 'other server'
+        # alone clicked Back, which returned to Data & Privacy, whose Continue walked
+        # straight back into this pane - steps 9 and 10 of the last run repeat that
+        # pair exactly. "Not now" declines the whole migration.
+        if "not now" in joined.lower() and "transfer" in joined.lower():
+            log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            log("step %d: after Not now -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
+
+        # The search sub-pane. Its title is the same "Transfer Your Data to This Mac",
+        # so it has to be recognised by something else. What is left after 'Not now'
+        # above and 'transfer your data' below have declined it is the genuine search
+        # pane: an 'Other Server...' link and no buttons anywhere below y=700 - no Back,
+        # no Continue, no cards. It waits for a peer Mac that a container cannot provide,
+        # and Back is the only way out.
         #
-        # 15 and 26 title this pane "Transfer Your Data to This Mac" and its body mentions
-        # Migration Assistant, so testing for 'migration assistant' matched THIS pane and
-        # clicked Not now on it - which does nothing here. 26 looped on it for 24 steps:
-        #
-        #   step 34: Transfer Your Data to This Mac Select a Mac, Time Machine backup...
-        #   step 34: same pane as last step (22 in a row)
-        #   step 34: migration pane; clicking Not now at (604,810)
-        #
-        # The control that declines this pane is "Don't Transfer" / "Don't transfer any
-        # data", which is already in BUTTONS, so the generic button search handles it.
-        # THE SEARCH SUB-PANE MUST BE HANDLED BEFORE THE TRANSFER PANE ITSELF.
-        #
-        # Its title is also "Transfer Your Data to This Mac", so the pane check below
-        # matched it and clicked the decline position - which does not exist here. The
-        # frame is unmistakable: title, one explanatory sentence, an "Other Server..."
-        # link, and NO buttons anywhere below y=700. 26 sat on it for thirty steps.
-        #
-        # "Other Server..." appears ONLY on this sub-pane, so it is the marker.
+        # Note that 'Other Server...' is NOT unique to this pane - it also appears on the
+        # migration pane - which is why the 'Not now' check has to come first.
         if "other server" in joined.lower():
             log("step %d: search sub-pane; clicking Back at %s" % (step, BACK_BUTTON))
             screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
