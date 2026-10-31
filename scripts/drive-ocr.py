@@ -47,6 +47,12 @@ SET_UP_AS_NEW = (869, 671)
 # The only control on the search sub-pane: the 'Other Server...' link, measured at
 # (752,571) on the captured frame.
 OTHER_SERVER_BUTTON = (775, 571)
+# 26's Data & Privacy pane draws Continue as a grey pill with grey text, which tesseract
+# returns as nothing. Measured from the frame by pixel values rather than by eye: the pill
+# spans x=1220..1330, y=786..818, so its centre is (1275,802). Clicking (1306,810) - the
+# position every other pane uses - lands on the pill's lower-right edge and Tahoe reads it
+# as something else entirely: 'Unable to Pair Computers'.
+PRIVACY_CONTINUE = (1275, 802)
 
 # Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
 # appears in every pane diagnosis. Measured, not guessed.
@@ -1039,7 +1045,7 @@ def main():
                 time.sleep(2)
             else:
                 log("step %d: privacy pane; clicking Continue at (1300,800)" % step)
-                screen.click(1300, 800)
+                screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
                 time.sleep(10)
                 main.privacy_waits = 0
             continue
