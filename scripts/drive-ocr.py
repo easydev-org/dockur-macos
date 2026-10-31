@@ -44,6 +44,9 @@ DONT_TRANSFER_BUTTON = (604, 810)
 # 26's transfer pane offers four radio cards and no Don't Transfer; the last card is the
 # one that declines. Measured from the captured frame: 'Set up as new' at (869,671).
 SET_UP_AS_NEW = (869, 671)
+# The only control on the search sub-pane: the 'Other Server...' link, measured at
+# (752,571) on the captured frame.
+OTHER_SERVER_BUTTON = (775, 571)
 
 # Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
 # appears in every pane diagnosis. Measured, not guessed.
@@ -1004,17 +1007,46 @@ def main():
         # Note that 'Other Server...' is NOT unique to this pane - it also appears on the
         # migration pane - which is why the 'Not now' check has to come first.
         if "other server" in joined.lower():
-            log("step %d: search sub-pane; clicking Back at %s" % (step, BACK_BUTTON))
-            screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
-            time.sleep(8)
-            after = signature_from(screen, prefix, step)
-            log("step %d: after Back -> %s" % (step, after))
-            # Back lands on the pane that offers the choices; press its primary button
-            # rather than re-entering a card.
-            log("step %d: pressing Continue on the pane Back returned to" % step)
-            screen.click(PRIMARY_BUTTON[0], PRIMARY_BUTTON[1])
-            time.sleep(8)
+            # Back here leads to another pane whose Continue returns to this one, so the
+            # pair cycles - 26 spent steps 22 through 34 doing exactly that:
+            #
+            #   step 22: search sub-pane; clicking Back at (1218,810)
+            #   step 22: after Back -> Transfer Your Data to This Mac Select a Mac, ...
+            #   step 22: pressing Continue on the pane Back returned to
+            #   step 22: now at -> Transfer Your Data to This Mac Select a Mac, ...
+            #
+            # Two things to try before repeating a known cycle, in order of how little
+            # they cost if wrong: Escape, which asks the pane to cancel; then Back plus
+            # the LEFT-hand button on its row, which is 'Not now' on the pane this
+            # returns to.
+            tries = getattr(main, "subpane_tries", 0)
+            main.subpane_tries = tries + 1
+            if tries == 0:
+                log("step %d: search sub-pane; pressing Esc" % step)
+                screen.key("esc")
+                time.sleep(6)
+            elif tries == 1:
+                log("step %d: search sub-pane; Back then Not now" % step)
+                screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+                time.sleep(8)
+                screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+                time.sleep(8)
+            else:
+                # Last resort: click the Other Server... link's own row, which is the
+                # only control this pane has.
+                log("step %d: search sub-pane; clicking Other Server" % step)
+                spot = None
+                for text, x, y, _w, _h in words:
+                    if text.strip().lower().startswith("other"):
+                        spot = (x, y)
+                        break
+                if spot is not None:
+                    screen.click(spot[0], spot[1])
+                else:
+                    screen.click(OTHER_SERVER_BUTTON[0], OTHER_SERVER_BUTTON[1])
+                time.sleep(8)
             log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
+            main.subpane_tries = 0
             continue
 
         if ("transfer your data" in joined.lower()
