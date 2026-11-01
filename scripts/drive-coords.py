@@ -67,6 +67,12 @@ def log(msg):
 
 class Driver:
     def __init__(self, sock, screen_w=1920, screen_h=1080):
+        # THE .qmp SUFFIX IS NOT OPTIONAL. drive-in-container.sh creates monitor.sock (HMP,
+        # plain text) and monitor.sock.qmp (QMP, JSON). Connecting to the first and parsing its
+        # greeting as JSON raises 'Expecting value: line 1 column 1' - which is exactly how the
+        # first coordinate-driven run died, before sending a single click.
+        if not sock.endswith(".qmp"):
+            sock = sock + ".qmp"
         self.q = qmpmod.QMP(sock)
         self.w = screen_w
         self.h = screen_h
