@@ -1338,7 +1338,21 @@ def main():
             # pane in this wizard uses.
             log("step %d: privacy pane; clicking Continue" % step)
             screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
-            time.sleep(3)
+            time.sleep(2)
+            # ESCAPE FIRST. The pane Continue opens is Migration Assistant's pairing
+            # handshake, and on macOS Escape cancels that kind of flow where a click on the
+            # pane's own controls does not - (1132,805) and (1218,810) were both tried at
+            # three seconds and the handshake still ran to its timeout.
+            log("step %d: sending Escape to leave the pairing flow" % step)
+            for _ in range(3):
+                screen.key("esc")
+                time.sleep(1.2)
+            early = signature_from(screen, prefix, step)
+            log("step %d: after Esc -> %s" % (step, early))
+            if early is not None and "data & privacy" not in (early or "").lower()                     and "pair" not in (early or "").lower():
+                log("step %d: Escape left the flow; continuing" % step)
+                continue
+            time.sleep(1)
             # THE CODE PANE HAS TWO BUTTONS, NOT THREE, SO ITS Not Now IS NOT AT x=604.
             #
             # The migration pane carries three - Not now (604) | Back (1220) | Continue
