@@ -38,7 +38,7 @@ PRIMARY = (1306, 810)
 NOT_NOW = (604, 810)
 # Not Now on the two-button pairing pane: measured x=1070..1194 at y=795..815, so (1132,805).
 # (1218,810) is the 20px gap between those two buttons and does nothing.
-CODE_NOT_NOW = (1132, 805)
+CODE_NOT_NOW = (1132, 801)
 # Back, on panes that have one.
 BACK = (1218, 810)
 # The 'Unable to Pair Computers' alert: single blue OK spanning x=843..1076, y=610..643.
@@ -312,19 +312,22 @@ def simple_continue(d, prefix, name, use_return_first=False):
     d.shot(prefix, name)
 
 
-def privacy_pane(d, prefix):
-    """Continue, then Not Now on the pairing pane it opens - within two seconds.
+def transfer_pane_two_buttons(d, prefix):
+    """The transfer pane that offers Not Now and a GREY Continue.
 
-    The pairing pane lives for about two seconds before the failure alert replaces it, which is
-    why it was never caught by OCR: by the time a frame had been taken and read, the alert was
-    up. Here the click after Continue is sent immediately, with no read in between.
+    Measured from the frame, bottom row y=785..830:
+
+      x=1070..1194   Not Now    centre (1132,801)
+      x=1214..1338   Continue   centre (1276,801)
+      x=1194..1214   background - the gap between them
+
+    Continue is disabled on this pane until one of the option cards is chosen, so pressing it
+    does nothing at all; Not Now is the only control that moves the wizard. The previous version
+    pressed Continue first and then aimed at Not Now, which is exactly backwards.
     """
-    d.click(*PRIMARY, settle=1.2, why="privacy Continue")
-    d.click(*CODE_NOT_NOW, settle=1.5, why="Not Now on the pairing pane, immediately")
-    # If the alert still appeared, dismiss it and press Not Now again on what is underneath.
-    d.click(*ALERT_OK, settle=1.5, why="alert OK if it appeared")
-    d.click(*CODE_NOT_NOW, settle=2.0, why="Not Now again")
-    d.shot(prefix, "privacy-after")
+    log("transfer pane: Not Now only, Continue is disabled here")
+    d.click(*CODE_NOT_NOW, settle=2.0, why="Not Now (Continue is grey)")
+    d.shot(prefix, "transfer-notnow")
 
 
 def account_pane(d, prefix, user, password):
@@ -374,7 +377,7 @@ def main():
     transfer_pane(d, prefix)
     simple_continue(d, prefix, "languages")
     simple_continue(d, prefix, "accessibility", use_return_first=True)
-    privacy_pane(d, prefix)
+    transfer_pane_two_buttons(d, prefix)
     simple_continue(d, prefix, "after-pairing")
     account_pane(d, prefix, user, password)
     apple_account(d, prefix)
