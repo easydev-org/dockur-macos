@@ -44,6 +44,9 @@ DONT_TRANSFER_BUTTON = (604, 810)
 # The 'Unable to Pair Computers' alert has one button, a blue OK spanning x=843..1076 at
 # y=610..643 - measured from the frame. Return does not dismiss it on this build.
 ALERT_OK = (959, 626)
+# The pairing-code pane has two buttons - 'Not Now' and 'Continue' - so Not Now occupies the
+# slot Back uses on three-button panes. (604,810) on that pane is empty background.
+CODE_PANE_NOT_NOW = (1218, 810)
 # 26's transfer pane offers four radio cards and no Don't Transfer; the last card is the
 # one that declines. Measured from the captured frame: 'Set up as new' at (869,671).
 SET_UP_AS_NEW = (869, 671)
@@ -1331,11 +1334,24 @@ def main():
             log("step %d: privacy pane; clicking Continue" % step)
             screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
             time.sleep(3)
-            # NOT NOW, IMMEDIATELY, ON THE PANE CONTINUE JUST OPENED.
-            log("step %d: pressing Not Now on the pane Continue opened at %s"
-                % (step, NOT_NOW_BUTTON))
+            # THE CODE PANE HAS TWO BUTTONS, NOT THREE, SO ITS Not Now IS NOT AT x=604.
+            #
+            # The migration pane carries three - Not now (604) | Back (1220) | Continue
+            # (1306) - and Not now is the leftmost. The code pane carries two:
+            #
+            #   [ Not Now ]   [ Continue ]
+            #
+            # so its Not Now sits where Back sits on the three-button row, at x=1218, and
+            # (604,810) on that pane is empty background. Measured on the privacy pane:
+            # x=560..1214 at y=795..815 is a flat (128,128,128) with ten stray pixels - no
+            # control at all.
+            log("step %d: pressing Not Now on the code pane at %s"
+                % (step, CODE_PANE_NOT_NOW))
+            screen.click(CODE_PANE_NOT_NOW[0], CODE_PANE_NOT_NOW[1])
+            time.sleep(4)
+            # If that did not take, try the leftmost slot the migration pane uses.
             screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
-            time.sleep(9)
+            time.sleep(6)
             after_privacy = signature_from(screen, prefix, step)
             log("step %d: after Continue+Not Now -> %s" % (step, after_privacy))
             if after_privacy is not None and "data & privacy" in (after_privacy or "").lower():
