@@ -52,7 +52,19 @@ OTHER_SERVER_BUTTON = (775, 571)
 # spans x=1220..1330, y=786..818, so its centre is (1275,802). Clicking (1306,810) - the
 # position every other pane uses - lands on the pill's lower-right edge and Tahoe reads it
 # as something else entirely: 'Unable to Pair Computers'.
-PRIVACY_CONTINUE = (1275, 802)
+# THE MEASURED CENTRE WAS A MISREADING.
+#
+# I narrowed this to (1275,802) after a pixel scan of the pill, and that changed nothing on
+# 26 while 15 goes through the same pane with an ordinary click at (1306,810):
+#
+#   step 11: Data & Privacy This icon appears when an Apple feature asks to use you
+#   step 11: clicking 'Continue' at (1306, 810)
+#   step 12: Not now Transfer information to this Mac Select a Mac, Time Machine ba
+#
+# The pill's fill is (224,224,224) on BOTH releases - that is not the disabled colour here,
+# it is simply how this pane draws its button - and x=1275 lands on the pill's left edge
+# rather than inside it. The position every other pane uses is correct on this one too.
+PRIVACY_CONTINUE = (1306, 810)
 
 # Back sits immediately left of it, and OCR reads this one reliably - "Back@1225,810"
 # appears in every pane diagnosis. Measured, not guessed.
@@ -1266,130 +1278,38 @@ def main():
         #
         # So: leave it alone and wait. If it has not moved after a few passes, click once
         # inside its own window (well above the link) and wait again.
-        if ("data & privacy" in joined.lower()
-                and "learn more" in joined.lower()
-                and "continue" not in joined.lower()
-                and "back" not in joined.lower()):
-            # CONTINUE IS THERE, GREY, AND NOTHING IN THE OCR SHOWS IT.
-            #
-            # A crop of the window's lower-right corner read through the image model shows
-            # a grey pill labelled Continue centred near (1300,800) - grey-on-grey, which
-            # tesseract returns as nothing, and 960 lit pixels on every row means a blank
-            # button row is indistinguishable from a populated one by that measure.
-            #
-            # A disabled Continue on this pane means the wizard has not finished: the pane
-            # scrolls, and the usual reason for a grey forward button is unread content.
-            # So scroll the pane to its end first, then press the button's measured centre.
-            waits = getattr(main, "privacy_waits", 0) + 1
-            main.privacy_waits = waits
-            if waits == 1:
-                log("step %d: privacy pane; scrolling it to the end" % step)
-                for _ in range(6):
-                    screen.scroll(960, 550, 3)   # positive scrolls DOWN
-                    time.sleep(0.7)
-                time.sleep(2)
-            elif waits == 2:
-                log("step %d: privacy pane; scrolling back up then down" % step)
-                for _ in range(6):
-                    screen.scroll(960, 550, 3)
-                    time.sleep(0.5)
-                time.sleep(2)
-            elif waits == 3:
-                # CONTINUE IS DISABLED, AND SCROLLING DOES NOT ENABLE IT.
-                #
-                # Reading the button out of the frame by colour settles it: the pill at
-                # x=1214..1338, y=786..818 is (224,224,224) with (0,0,0) lettering and
-                # there is not one blue pixel in the whole region - a macOS primary button
-                # that is enabled is blue. So the click was landing on a disabled button,
-                # passing through to whatever sits behind the window, and Tahoe answered
-                # 'Unable to Pair Computers'. That is why moving the coordinate by 31px
-                # changed nothing.
-                #
-                # The one control this pane actually offers is 'Learn More...' at
-                # (812,706). Opening and closing it is the only reading-related action
-                # left, and a wizard commonly enables its forward button once such a link
-                # has been visited.
-                log("step %d: privacy pane; opening Learn More at (812,706)" % step)
-                screen.click(812, 706)
-                time.sleep(8)
-                log("step %d: now at -> %s" % (step, signature_from(screen, prefix, step)))
-            else:
-                # THE BUTTON MOVES ON THIS RELEASE.
-                #
-                # 26's privacy pane carries a list 14 and 15 do not have - Advanced Data
-                # Protection, Age Range for Apps, AirDrop - so the pane is longer and its
-                # Continue is not where the captured short version put it:
-                #
-                #   x=1214..1338, y=786..818   (224,224,224), zero blue pixels
-                #
-                # That rectangle is the disabled pill from the SHORT pane. On the long one
-                # the forward button sits lower, or the pane has to be scrolled before it
-                # exists at all. So: scroll to the very end, then look for a blue button
-                # anywhere on the bottom band - blue is the colour of an enabled primary
-                # control and needs no OCR to find.
-                log("step %d: privacy pane; scrolling to its end, then hunting for a blue button" % step)
-                for _ in range(10):
-                    screen.scroll(960, 550, 4)
-                    time.sleep(0.6)
-                time.sleep(2)
-                shot = screen.grab("%s-s%d-bluehunt" % (prefix, step))
-                spot = find_blue_button(shot)
-                if spot is not None:
-                    log("step %d: blue button at %s; clicking" % (step, spot))
-                    screen.click(spot[0], spot[1])
-                else:
-                    # NO BLUE ANYWHERE, AFTER SCROLLING TO THE END - so the button is not
-                    # hidden, it is genuinely disabled, and this pane is waiting on
-                    # something in its own content. The pane lists topics that 14 and 15 do
-                    # not carry:
-                    #
-                    #   Data & Privacy
-                    #   Advanced Data Protection    Age Range for Apps    AirDrop    ...
-                    #
-                    # Those rows are clickable detail entries. Opening one and closing it is
-                    # the only interaction left that this pane can be waiting on, and it
-                    # costs nothing to try before pressing a disabled button again.
-                    # TAB TO THE BUTTON.
-                    #
-                    # Clicking rows was tried and they are not rows: find_list_rows
-                    # returned prose ('Apple' at (757,614)), and opening it changed
-                    # nothing. What is left is the focus ring - macOS moves it with Tab,
-                    # and a focused control activates with Space or Return. That reaches
-                    # buttons a click cannot, because a disabled-looking control that is
-                    # actually focusable is exactly what a keyboard is for.
-                    # TAB WALKED THE WHOLE RING AND SPACE DID NOTHING - so try the
-                    # sequence that WORKED on the country pane.
-                    #
-                    # That pane's selection committed with Return, Return, Space and then
-                    # Tab x6 and Space, and the log records the result plainly:
-                    #
-                    #   step 8: after tab+space -> None
-                    #
-                    # 'None' there means the frame went blank mid-transition, i.e. the
-                    # wizard moved. The same sequence is tried here, twice over, because
-                    # this pane is one control longer than the country list and the focus
-                    # ring is therefore longer too.
-                    log("step %d: privacy pane; Return,Return,Space then Tab walk + Space" % step)
-                    for commit in ("ret", "ret", "spc"):
-                        screen.key(commit)
-                        time.sleep(1.2)
-                    time.sleep(3)
-                    moved = signature_from(screen, prefix, step)
-                    log("step %d: after commit keys -> %s" % (step, moved))
-                    if moved is None or "data & privacy" not in (moved or "").lower():
-                        log("step %d: the pane changed" % step)
-                        main.privacy_waits = 0
-                        continue
-                    for _ in range(12):
-                        screen.key("tab")
-                        time.sleep(0.5)
-                    screen.key("spc")
+        # THE PRIVACY PANE IS A PLAIN CONTINUE, AND ALWAYS WAS.
+        #
+        # 15 walks through it with an ordinary click, and its log records the two lines
+        # that follow:
+        #
+        #   step 11: clicking 'Continue' at (1306, 810)
+        #   step 12: Not now Transfer information to this Mac ...
+        #
+        # Everything added here in earlier rounds - scrolling to the end, hunting for a blue
+        # button, opening Learn More, walking rows, tabbing the focus ring - was built on a
+        # misreading of the pill's colour. (224,224,224) is how this pane draws its button on
+        # every release; it is not the disabled colour, and a pixel scan cannot tell a
+        # grey-on-grey label from a disabled control. The click at (1275,802) also landed on
+        # the pill's left edge rather than inside it.
+        #
+        # One click, at the position every other pane uses. If that does not move it, the
+        # pane is read once more and the button searched for by label, which is what the
+        # rest of the wizard already does.
+        if "data & privacy" in joined.lower():
+            log("step %d: privacy pane; clicking Continue at %s" % (step, PRIVACY_CONTINUE))
+            screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
+            time.sleep(9)
+            after_privacy = signature_from(screen, prefix, step)
+            log("step %d: after Continue -> %s" % (step, after_privacy))
+            if after_privacy is not None and "data & privacy" in (after_privacy or "").lower():
+                btn_p, label_p = find_button(words)
+                if btn_p is not None:
+                    log("step %d: clicking %r at %s" % (step, label_p, btn_p))
+                    screen.click(btn_p[0], btn_p[1])
                     time.sleep(8)
-                    log("step %d: after tab walk + Space -> %s"
+                    log("step %d: now at -> %s"
                         % (step, signature_from(screen, prefix, step)))
-                    main.privacy_waits = 0
-                time.sleep(10)
-                main.privacy_waits = 0
             continue
 
         # THE TRANSFER SEARCH PANE HAS NO EXIT, SO END THE WIZARD AND LET THE DISK BOOT.
