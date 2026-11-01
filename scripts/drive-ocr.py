@@ -1333,6 +1333,38 @@ def main():
                         % (step, signature_from(screen, prefix, step)))
             continue
 
+        # THE PAIRING-CODE PANE: "Enter the code below on your other computer".
+        #
+        # 26 reaches this straight after the privacy pane's Continue - which is the right
+        # button, at the right place, and it works:
+        #
+        #   step 18: click at (1306,810) moved it -> Transfer information to this Mac
+        #            Enter the code below on your other computer
+        #
+        # 15 lands on a DIFFERENT pane at this point, one offering 'Select a Mac, Time
+        # Machine backup...' with a Not now button. 26 offers a pairing code instead, which
+        # needs a second Mac to type it - something a container cannot provide. The way out
+        # is Back, then the declining control on whatever pane that returns to.
+        if "enter the code" in joined.lower() or "your other computer" in joined.lower():
+            tries_pc = getattr(main, "paircode_tries", 0) + 1
+            main.paircode_tries = tries_pc
+            if tries_pc <= 2:
+                log("step %d: pairing-code pane; clicking Back at %s" % (step, BACK_BUTTON))
+                screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+                time.sleep(8)
+                log("step %d: after Back -> %s"
+                    % (step, signature_from(screen, prefix, step)))
+            else:
+                log("step %d: pairing-code pane; Escape then Not now" % step)
+                screen.key("esc")
+                time.sleep(4)
+                screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+                time.sleep(8)
+                log("step %d: after Esc+Not now -> %s"
+                    % (step, signature_from(screen, prefix, step)))
+                main.paircode_tries = 0
+            continue
+
         # THE TRANSFER SEARCH PANE HAS NO EXIT, SO END THE WIZARD AND LET THE DISK BOOT.
         #
         # Every click on this pane was tried and none leads out - Escape, Back, the Other
