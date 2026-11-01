@@ -44,9 +44,14 @@ DONT_TRANSFER_BUTTON = (604, 810)
 # The 'Unable to Pair Computers' alert has one button, a blue OK spanning x=843..1076 at
 # y=610..643 - measured from the frame. Return does not dismiss it on this build.
 ALERT_OK = (959, 626)
-# The pairing-code pane has two buttons - 'Not Now' and 'Continue' - so Not Now occupies the
-# slot Back uses on three-button panes. (604,810) on that pane is empty background.
-CODE_PANE_NOT_NOW = (1218, 810)
+# The pairing-code pane has TWO buttons, side by side, and the gap between them is where
+# (1218,810) lands - which is why clicking it did nothing. Measured from the frame captured
+# while the failure alert was up, with the pane visible underneath:
+#
+#   x=1070..1194  (195,195,195)   Not Now      centre (1132, 805)
+#   x=1214..1338  (195,195,195)   Continue     centre (1276, 805)
+#   x=1194..1214  background      <- 1218 lands here
+CODE_PANE_NOT_NOW = (1132, 805)
 # 26's transfer pane offers four radio cards and no Don't Transfer; the last card is the
 # one that declines. Measured from the captured frame: 'Set up as new' at (869,671).
 SET_UP_AS_NEW = (869, 671)
