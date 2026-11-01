@@ -65,6 +65,74 @@ def log(msg):
     print("[xy %s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
 
+# ---------------------------------------------------------------- pacing by pixels
+#
+# THE FIRST RUN PROVED THIS IS NEEDED. All fifty steps executed against a black screen and the
+# last frame - taken after the sequence finished - showed the wizard only just arriving at the
+# migration pane. A fixed 45-second wait assumed the guest boots into Setup Assistant in the
+# time a warm VM takes; this one takes several minutes, and every click before that landed on
+# nothing.
+#
+# These helpers look at the picture, but only to decide WHEN to act - never WHAT to do. They are
+# colour and difference tests, not OCR: no text is read, no label is matched, and the pane
+# sequence stays exactly as written below.
+
+def _read_ppm(path):
+    try:
+        with open(path, "rb") as fh:
+            if fh.readline().strip() != b"P6":
+                return None
+            line = fh.readline()
+            while line.startswith(b"#"):
+                line = fh.readline()
+            w, h = map(int, line.split())
+            fh.readline()
+            return w, h, fh.read()
+    except (OSError, ValueError):
+        return None
+
+
+def _dark_fraction(path):
+    """How much of the frame is black. 1.0 means nothing is being drawn."""
+    got = _read_ppm(path)
+    if not got:
+        return 1.0
+    w, h, data = got
+    dark = total = 0
+    for y in range(0, h, 8):
+        row = y * w * 3
+        for x in range(0, w, 8):
+            i = row + x * 3
+            if i + 2 >= len(data):
+                break
+            if data[i] < 40 and data[i + 1] < 40 and data[i + 2] < 40:
+                dark += 1
+            total += 1
+    return dark / float(total or 1)
+
+
+def _signature(path):
+    """A coarse brightness grid, for asking 'did the picture change?'."""
+    got = _read_ppm(path)
+    if not got:
+        return None
+    w, h, data = got
+    sig = []
+    for gy in range(12):
+        for gx in range(16):
+            x = (gx * w) // 16
+            y = (gy * h) // 12
+            i = (y * w + x) * 3
+            sig.append(sum(data[i:i + 3]) // 3 if i + 2 < len(data) else 0)
+    return sig
+
+
+def _changed(a, b, threshold=6):
+    if a is None or b is None:
+        return True
+    return sum(1 for p, q in zip(a, b) if abs(p - q) > threshold) > 8
+
+
 class Driver:
     def __init__(self, sock, frames_dir, screen_w=1920, screen_h=1080):
         self.frames_dir = frames_dir.rstrip("/")
@@ -124,7 +192,7 @@ class Driver:
 
         TWO PATHS, AND THEY MUST NOT BE CONFUSED. qemu runs inside the container and resolves
         'filename' against ITS filesystem, where the host's frames directory is mounted at
-        /frames. . The earlier version passed the host-style path into the QMP call, qemu wrote
+        /frames. The earlier version passed the host-style path into the QMP call, qemu wrote
         it somewhere the host never sees, and the artifact came back with no frames at all -
         while the log showed no error, because qemu had succeeded.
         """
@@ -140,9 +208,46 @@ class Driver:
         host_path = os.path.join(self.frames_dir, os.path.basename(leaf))
         for _ in range(25):
             if os.path.exists(host_path):
-                return
+                return host_path
             time.sleep(0.2)
         log("frame never appeared at %s" % host_path)
+        return None
+
+    def wait_for_wizard(self, prefix, timeout=900):
+        """Block until the screen stops being black.
+
+        The guest takes minutes to reach Setup Assistant - not the 45 seconds the first run
+        allowed, which is why all fifty of its steps landed on nothing. Nothing is read here
+        beyond 'is this frame black'; the pane that finally appears is not inspected.
+        """
+        log("waiting for the wizard to draw something")
+        start = time.time()
+        while time.time() - start < timeout:
+            path = self.shot(prefix, "boot")
+            if path is not None and _dark_fraction(path) < 0.85:
+                log("screen has content after %ds" % int(time.time() - start))
+                return True
+            time.sleep(5)
+        log("nothing drawn after %ds - is the guest alive?" % timeout)
+        return False
+
+    def settle(self, prefix, name, quiet=2.0, timeout=90):
+        """Wait until two consecutive frames match, so a click lands on a finished pane.
+
+        Transition animations mean a click sent the instant a pane begins drawing can hit a
+        control that is still moving. This is a picture comparison, not a read.
+        """
+        previous = None
+        start = time.time()
+        while time.time() - start < timeout:
+            path = self.shot(prefix, name)
+            sig = _signature(path) if path else None
+            if previous is not None and not _changed(previous, sig):
+                return True
+            previous = sig
+            time.sleep(quiet)
+        log("pane never settled at %s" % name)
+        return False
 
     def close(self):
         try:
@@ -177,6 +282,7 @@ def country_pane(d, prefix):
     United States near the bottom; and Return does not commit, but Tab-walking the focus ring
     and pressing Space does.
     """
+    d.settle(prefix, "country-settle")
     d.shot(prefix, "country")
     d.click(*COUNTRY_LIST, settle=0.8, why="focus the list")
     d.keys("united states", per_char=0.3, clear=False)
@@ -199,6 +305,7 @@ def transfer_pane(d, prefix):
 
 def simple_continue(d, prefix, name, use_return_first=False):
     """A pane whose only control is Continue at the usual place."""
+    d.settle(prefix, name + "-before")
     if use_return_first:
         d.key("ret", settle=1.5)
     d.click(*PRIMARY, settle=2.0, why=name)
@@ -255,10 +362,13 @@ def main():
     d = Driver(sock, os.path.dirname(os.path.abspath(prefix)) or ".")
     log("connected; driving by coordinates only")
 
-    # The guest is still booting into the wizard for the first half-minute or so. Nothing is
-    # read here, so this is a plain wait rather than a poll.
-    log("waiting 45s for the wizard to appear")
-    time.sleep(45)
+    # WAIT FOR THE WIZARD TO EXIST, not for a guessed duration. The first run waited 45 seconds,
+    # by which time this guest was still showing a black screen, and all fifty steps were sent
+    # into it.
+    if not d.wait_for_wizard(prefix):
+        log("no wizard ever appeared; stopping rather than clicking at nothing")
+        d.close()
+        sys.exit(1)
 
     country_pane(d, prefix)
     transfer_pane(d, prefix)
