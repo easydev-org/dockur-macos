@@ -1322,23 +1322,35 @@ def main():
                     # and a focused control activates with Space or Return. That reaches
                     # buttons a click cannot, because a disabled-looking control that is
                     # actually focusable is exactly what a keyboard is for.
-                    log("step %d: privacy pane; tabbing through its controls" % step)
-                    for tabn in range(1, 9):
+                    # TAB WALKED THE WHOLE RING AND SPACE DID NOTHING - so try the
+                    # sequence that WORKED on the country pane.
+                    #
+                    # That pane's selection committed with Return, Return, Space and then
+                    # Tab x6 and Space, and the log records the result plainly:
+                    #
+                    #   step 8: after tab+space -> None
+                    #
+                    # 'None' there means the frame went blank mid-transition, i.e. the
+                    # wizard moved. The same sequence is tried here, twice over, because
+                    # this pane is one control longer than the country list and the focus
+                    # ring is therefore longer too.
+                    log("step %d: privacy pane; Return,Return,Space then Tab walk + Space" % step)
+                    for commit in ("ret", "ret", "spc"):
+                        screen.key(commit)
+                        time.sleep(1.2)
+                    time.sleep(3)
+                    moved = signature_from(screen, prefix, step)
+                    log("step %d: after commit keys -> %s" % (step, moved))
+                    if moved is None or "data & privacy" not in (moved or "").lower():
+                        log("step %d: the pane changed" % step)
+                        main.privacy_waits = 0
+                        continue
+                    for _ in range(12):
                         screen.key("tab")
-                        time.sleep(0.8)
-                        shot2 = screen.grab("%s-s%d-tab%d" % (prefix, step, tabn))
-                        spot2 = find_blue_button(shot2)
-                        if spot2 is not None:
-                            log("step %d: blue control appeared at %s after %d tabs"
-                                % (step, spot2, tabn))
-                            screen.click(spot2[0], spot2[1])
-                            time.sleep(9)
-                            break
-                    else:
-                        log("step %d: no blue after tabbing; pressing Space at the ring" % step)
+                        time.sleep(0.5)
                     screen.key("spc")
-                    time.sleep(6)
-                    log("step %d: after tabbing -> %s"
+                    time.sleep(8)
+                    log("step %d: after tab walk + Space -> %s"
                         % (step, signature_from(screen, prefix, step)))
                     main.privacy_waits = 0
                 time.sleep(10)
