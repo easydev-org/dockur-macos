@@ -1336,6 +1336,26 @@ def main():
                         % (step, signature_from(screen, prefix, step)))
             continue
 
+        # NOT NOW IS THE ANSWER ON THIS PANE, AND IT MUST BE CHECKED FIRST.
+        #
+        # The pane 26 lands on after the privacy Continue offers both:
+        #
+        #   Transfer information to this Mac
+        #   Enter the code below on your other computer
+        #   [ Not Now ]  [ Continue ]
+        #
+        # Continue starts a pairing handshake that waits for a second Mac and fails after
+        # thirteen seconds; Not Now declines the whole transfer. Checking the code wording
+        # before this branch meant the driver pressed Continue eleven times in one run.
+        #
+        if "not now" in joined.lower():
+            log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            log("step %d: after Not now -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
+
         # THE PAIRING-CODE PANE: "Enter the code below on your other computer".
         #
         # 26 reaches this straight after the privacy pane's Continue - which is the right
@@ -1348,24 +1368,28 @@ def main():
         # Machine backup...' with a Not now button. 26 offers a pairing code instead, which
         # needs a second Mac to type it - something a container cannot provide. The way out
         # is Back, then the declining control on whatever pane that returns to.
+        # THE PAIRING-CODE PANE: PRESS NOT NOW AND BE DONE WITH IT.
+        #
+        #   Transfer information to this Mac
+        #   Enter the code below on your other computer
+        #   [ Not Now ]   [ Continue ]
+        #
+        # Continue begins a handshake with a second Mac, waits thirteen seconds and fails:
+        #
+        #   step 18: click at (1306,810) moved it -> ... Enter the code below ...
+        #   step 18: after Continue -> Unable to Pair Computers
+        #
+        # then the alert is dismissed, the pane returns, and Continue starts it again -
+        # eleven times in one run. 'Not Now' is on this pane and declines the whole thing;
+        # it just has to be pressed instead of Continue, and checked before the code wording
+        # so nothing reaches Continue first.
         if "enter the code" in joined.lower() or "your other computer" in joined.lower():
-            tries_pc = getattr(main, "paircode_tries", 0) + 1
-            main.paircode_tries = tries_pc
-            if tries_pc <= 2:
-                log("step %d: pairing-code pane; clicking Back at %s" % (step, BACK_BUTTON))
-                screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
-                time.sleep(8)
-                log("step %d: after Back -> %s"
-                    % (step, signature_from(screen, prefix, step)))
-            else:
-                log("step %d: pairing-code pane; Escape then Not now" % step)
-                screen.key("esc")
-                time.sleep(4)
-                screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
-                time.sleep(8)
-                log("step %d: after Esc+Not now -> %s"
-                    % (step, signature_from(screen, prefix, step)))
-                main.paircode_tries = 0
+            log("step %d: pairing-code pane; clicking Not Now at %s"
+                % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            log("step %d: after Not Now -> %s"
+                % (step, signature_from(screen, prefix, step)))
             continue
 
         # THE TRANSFER SEARCH PANE HAS NO EXIT, SO END THE WIZARD AND LET THE DISK BOOT.
@@ -1456,17 +1480,6 @@ def main():
             screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
             time.sleep(9)
             log("step %d: after Not Now -> %s"
-                % (step, signature_from(screen, prefix, step)))
-            continue
-            log("step %d: after Return+Esc -> %s"
-                % (step, signature_from(screen, prefix, step)))
-            continue
-
-        if "not now" in joined.lower() and "transfer" in joined.lower():
-            log("step %d: migration pane; clicking Not now at %s" % (step, NOT_NOW_BUTTON))
-            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
-            time.sleep(9)
-            log("step %d: after Not now -> %s"
                 % (step, signature_from(screen, prefix, step)))
             continue
 
