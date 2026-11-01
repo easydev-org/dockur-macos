@@ -1297,9 +1297,30 @@ def main():
         # pane is read once more and the button searched for by label, which is what the
         # rest of the wizard already does.
         if "data & privacy" in joined.lower():
-            log("step %d: privacy pane; clicking Continue at %s" % (step, PRIVACY_CONTINUE))
-            screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
-            time.sleep(9)
+            # THE BUTTON IS AT THE WINDOW'S RIGHT EDGE, NOT AT 1306.
+            #
+            # Measured from the two frames side by side, and they are not the same shape:
+            #
+            #   15   button fill spans x=1276..1338   (light theme, background 236)
+            #   26   button fill spans x=1214..1338   (dark theme, background 128)
+            #
+            # 26's pill starts 62px further left, so its CENTRE is (1276,805) and x=1306 is
+            # its right-hand third. 15 happens to work at 1306 because its pill starts at
+            # 1276. Clicking 26's right-hand third hits the rounded end and misses.
+            #
+            # Both numbers are tried, right edge first because that is what every other
+            # pane in this wizard uses.
+            log("step %d: privacy pane; clicking Continue" % step)
+            for cx, cy in (PRIVACY_CONTINUE, (1276, 805), (1306, 805), (1290, 800)):
+                screen.click(cx, cy)
+                time.sleep(4)
+                seen_now = signature_from(screen, prefix, step)
+                if seen_now is None or "data & privacy" not in (seen_now or "").lower():
+                    log("step %d: click at (%d,%d) moved it -> %s"
+                        % (step, cx, cy, seen_now))
+                    break
+                log("step %d: (%d,%d) did not move it" % (step, cx, cy))
+            time.sleep(5)
             after_privacy = signature_from(screen, prefix, step)
             log("step %d: after Continue -> %s" % (step, after_privacy))
             if after_privacy is not None and "data & privacy" in (after_privacy or "").lower():
