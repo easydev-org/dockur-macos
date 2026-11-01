@@ -1087,6 +1087,21 @@ def main():
                 # field editor, the second accepts), and the pane's Continue then enables.
                 # Space is sent as well, because on some builds Space is the commit and
                 # Return only dismisses. Then the pane is read for a button.
+                # DOUBLE CLICK WHAT THE KEYBOARD POINTED AT.
+                #
+                # The keyboard moves the highlight - 'highlight reached United States after
+                # 1 steps' - and Return/Return/Space do not commit it. What was never tried
+                # on the highlighted row is a DOUBLE click: in a macOS list a single click
+                # moves the selection, a double click opens/commits it, and this list has
+                # already shown that single clicks do nothing at all.
+                log("step %d: double-clicking the highlighted row at %s"
+                    % (step, wanted_pt))
+                screen.click(wanted_pt[0], wanted_pt[1])
+                time.sleep(0.3)
+                screen.click(wanted_pt[0], wanted_pt[1])
+                time.sleep(0.3)
+                screen.click(wanted_pt[0], wanted_pt[1])
+                time.sleep(3)
                 for commit in ("ret", "ret", "spc"):
                     screen.key(commit)
                     time.sleep(1.5)
@@ -1099,16 +1114,36 @@ def main():
                     screen.click(btn[0], btn[1])
                     time.sleep(8)
                 else:
-                    # Last resort: Tab to the button and press Space, which reaches a
-                    # control that a click cannot.
-                    log("step %d: no button after commit; tabbing to it" % step)
-                    for _ in range(6):
+                    # TAB IS NOT SAFE HERE, and the last run proved it the hard way.
+                    #
+                    #   step 12: after tab+space -> None
+                    #   ...172 consecutive 'nothing readable' frames, then done
+                    #
+                    # 'None' was read as 'the wizard is moving'. It was not: the guest had
+                    # gone dark. Six Tabs from the country list walk past Continue - which
+                    # is disabled and therefore skipped - and land on the wizard's own
+                    # power controls, and Space pressed one. The machine shut down.
+                    #
+                    # So Tab is used ONE step at a time, the frame is read after each, and
+                    # the walk stops the moment the picture is gone. If it goes dark the
+                    # cause is a power control and there is nothing to salvage from this
+                    # pass - but at least it is reported as what it is.
+                    log("step %d: no button after commit; stepping the focus ring carefully" % step)
+                    dark = False
+                    for tabn in range(1, 7):
                         screen.key("tab")
-                        time.sleep(0.6)
-                    screen.key("spc")
-                    time.sleep(6)
-                    log("step %d: after tab+space -> %s"
-                        % (step, signature_from(screen, prefix, step)))
+                        time.sleep(0.7)
+                        seen_tab = signature_from(screen, prefix, step)
+                        if seen_tab is None:
+                            log("step %d: screen went dark after %d tabs; stopping - a power"
+                                " control was reached" % (step, tabn))
+                            dark = True
+                            break
+                    if not dark:
+                        screen.key("spc")
+                        time.sleep(6)
+                        log("step %d: after tab+space -> %s"
+                            % (step, signature_from(screen, prefix, step)))
                 main.country_phase = None
                 continue
 
