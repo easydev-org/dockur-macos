@@ -1415,11 +1415,32 @@ def main():
             # So Return alone is not an exit. After dismissing, Escape is sent as well -
             # the wizard treats it as "leave this optional flow" - and only then is the
             # pane re-read. The attempt counter keeps the pair from repeating forever.
-            log("step %d: pairing alert; dismissing with Return then Esc" % step)
+            # THE ALERT IS WHAT MUST NOT BE FOLLOWED BY ANOTHER CONTINUE.
+            #
+            # The code pane exists for about thirteen seconds before the wizard gives up on
+            # its own:
+            #
+            #   16:12:58 moved it -> Transfer information to this Mac Enter the code below ...
+            #   16:13:11 after Continue -> Unable to Pair Computers
+            #
+            # so by the time the alert is read and dismissed, the pane has already failed.
+            # Dismissing it returns to the privacy pane, whose Continue walks straight back
+            # into the same thirteen-second wait - eleven times in one run.
+            #
+            # After dismissing, Back is pressed: that pane's Continue is what enters the
+            # code path, and its Back is the only control that avoids it.
+            log("step %d: pairing alert; dismissing, then Back from the pane behind it" % step)
             screen.key("ret")
             time.sleep(3)
             screen.key("esc")
-            time.sleep(5)
+            time.sleep(4)
+            log("step %d: after dismiss -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
+            time.sleep(8)
+            log("step %d: after Back -> %s"
+                % (step, signature_from(screen, prefix, step)))
+            continue
             log("step %d: after Return+Esc -> %s"
                 % (step, signature_from(screen, prefix, step)))
             continue
