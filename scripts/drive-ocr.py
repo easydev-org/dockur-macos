@@ -1299,6 +1299,21 @@ def main():
         # One click, at the position every other pane uses. If that does not move it, the
         # pane is read once more and the button searched for by label, which is what the
         # rest of the wizard already does.
+        # THE PRIVACY PANE HAS ONE BUTTON, AND IT LEADS STRAIGHT INTO THE PAIRING CODE.
+        #
+        # Measured across the whole button row y=795..815:
+        #
+        #   x=560..1214   (128,128,128)  background - no control
+        #   x=1214..1338  (224,224,224)  the single Continue
+        #
+        # So there is no Not Now on this pane to press instead. Continue opens
+        #   'Transfer information to this Mac - Enter the code below on your other computer'
+        # and THAT pane has Not Now, at the same (604,810) that the migration pane uses.
+        #
+        # The code pane is short-lived: it is replaced by the failure alert in about
+        # thirteen seconds, which is why OCR never caught it. Clicking (604,810) straight
+        # after Continue lands on Not Now while the pane is still up, and declines the
+        # transfer before the handshake begins.
         if "data & privacy" in joined.lower():
             # THE BUTTON IS AT THE WINDOW'S RIGHT EDGE, NOT AT 1306.
             #
@@ -1314,16 +1329,26 @@ def main():
             # Both numbers are tried, right edge first because that is what every other
             # pane in this wizard uses.
             log("step %d: privacy pane; clicking Continue" % step)
-            for cx, cy in (PRIVACY_CONTINUE, (1276, 805), (1306, 805), (1290, 800)):
-                screen.click(cx, cy)
-                time.sleep(4)
-                seen_now = signature_from(screen, prefix, step)
-                if seen_now is None or "data & privacy" not in (seen_now or "").lower():
-                    log("step %d: click at (%d,%d) moved it -> %s"
-                        % (step, cx, cy, seen_now))
-                    break
-                log("step %d: (%d,%d) did not move it" % (step, cx, cy))
-            time.sleep(5)
+            screen.click(PRIVACY_CONTINUE[0], PRIVACY_CONTINUE[1])
+            time.sleep(3)
+            # NOT NOW, IMMEDIATELY, ON THE PANE CONTINUE JUST OPENED.
+            log("step %d: pressing Not Now on the pane Continue opened at %s"
+                % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            after_privacy = signature_from(screen, prefix, step)
+            log("step %d: after Continue+Not Now -> %s" % (step, after_privacy))
+            if after_privacy is not None and "data & privacy" in (after_privacy or "").lower():
+                # Still here: the pane never changed, so the click missed. Fall back to the
+                # ordinary label search.
+                btn_p, label_p = find_button(words)
+                if btn_p is not None:
+                    log("step %d: clicking %r at %s" % (step, label_p, btn_p))
+                    screen.click(btn_p[0], btn_p[1])
+                    time.sleep(8)
+                    log("step %d: now at -> %s"
+                        % (step, signature_from(screen, prefix, step)))
+            continue
             after_privacy = signature_from(screen, prefix, step)
             log("step %d: after Continue -> %s" % (step, after_privacy))
             if after_privacy is not None and "data & privacy" in (after_privacy or "").lower():
