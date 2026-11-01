@@ -41,6 +41,9 @@ PRIMARY_BUTTON = (1306, 810)
 # The transfer pane's decline control: left of Back and Continue on the button row,
 # where "Not now" sits on the migration pane.
 DONT_TRANSFER_BUTTON = (604, 810)
+# The 'Unable to Pair Computers' alert has one button, a blue OK spanning x=843..1076 at
+# y=610..643 - measured from the frame. Return does not dismiss it on this build.
+ALERT_OK = (959, 626)
 # 26's transfer pane offers four radio cards and no Don't Transfer; the last card is the
 # one that declines. Measured from the captured frame: 'Set up as new' at (869,671).
 SET_UP_AS_NEW = (869, 671)
@@ -1429,16 +1432,30 @@ def main():
             #
             # After dismissing, Back is pressed: that pane's Continue is what enters the
             # code path, and its Back is the only control that avoids it.
-            log("step %d: pairing alert; dismissing, then Back from the pane behind it" % step)
-            screen.key("ret")
-            time.sleep(3)
-            screen.key("esc")
+            # THE ALERT HAS A BLUE OK BUTTON TWO THIRDS DOWN, AND THE PANE BEHIND IT
+            # HAS A NOT NOW. Reading the frame settles both:
+            #
+            #   Unable to Pair Computers
+            #   This Mac could not be paired with the computer you want to connect.
+            #   [        OK        ]        blue fill x=843..1076, y=610..643
+            #
+            #   background pane:
+            #   Transfer information to this Mac
+            #   Enter the code below on your other computer
+            #   [ Not Now ]  [ Continue ]   both greyed out while the alert is up
+            #
+            # Return does not dismiss a plain alert on this build, and Back goes the wrong
+            # way. So: click OK, then press Not Now on the pane it uncovers - that pane is
+            # the one offering to pair, and Not Now is its way out.
+            log("step %d: pairing alert; clicking OK at %s" % (step, ALERT_OK))
+            screen.click(ALERT_OK[0], ALERT_OK[1])
             time.sleep(4)
-            log("step %d: after dismiss -> %s"
-                % (step, signature_from(screen, prefix, step)))
-            screen.click(BACK_BUTTON[0], BACK_BUTTON[1])
-            time.sleep(8)
-            log("step %d: after Back -> %s"
+            after_ok = signature_from(screen, prefix, step)
+            log("step %d: after OK -> %s" % (step, after_ok))
+            log("step %d: clicking Not Now at %s" % (step, NOT_NOW_BUTTON))
+            screen.click(NOT_NOW_BUTTON[0], NOT_NOW_BUTTON[1])
+            time.sleep(9)
+            log("step %d: after Not Now -> %s"
                 % (step, signature_from(screen, prefix, step)))
             continue
             log("step %d: after Return+Esc -> %s"
