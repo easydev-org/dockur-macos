@@ -66,7 +66,8 @@ def log(msg):
 
 
 class Driver:
-    def __init__(self, sock, screen_w=1920, screen_h=1080):
+    def __init__(self, sock, frames_dir, screen_w=1920, screen_h=1080):
+        self.frames_dir = frames_dir.rstrip("/")
         # THE .qmp SUFFIX IS NOT OPTIONAL. drive-in-container.sh creates monitor.sock (HMP,
         # plain text) and monitor.sock.qmp (QMP, JSON). Connecting to the first and parsing its
         # greeting as JSON raises 'Expecting value: line 1 column 1' - which is exactly how the
@@ -119,14 +120,29 @@ class Driver:
         time.sleep(1.0)
 
     def shot(self, prefix, name):
-        """A frame for the record - never read, only kept, so a failure can be looked at later."""
+        """A frame for the record - never read, only kept, so a failure can be looked at later.
+
+        TWO PATHS, AND THEY MUST NOT BE CONFUSED. qemu runs inside the container and resolves
+        'filename' against ITS filesystem, where the host's frames directory is mounted at
+        /frames. . The earlier version passed the host-style path into the QMP call, qemu wrote
+        it somewhere the host never sees, and the artifact came back with no frames at all -
+        while the log showed no error, because qemu had succeeded.
+        """
         self.serial += 1
-        path = "/frames/%s-%03d-%s.ppm" % (prefix, self.serial, name)
+        leaf = "%s-%03d-%s.ppm" % (prefix, self.serial, name)
+        in_container = "/frames/" + os.path.basename(leaf)
         try:
-            self.q.execute("screendump", filename=path)
+            self.q.execute("screendump", filename=in_container)
         except Exception as exc:
             log("screendump failed at %s: %s" % (name, exc))
-        time.sleep(1.6)
+            return
+        # Wait for the host to see it, rather than guessing with a sleep.
+        host_path = os.path.join(self.frames_dir, os.path.basename(leaf))
+        for _ in range(25):
+            if os.path.exists(host_path):
+                return
+            time.sleep(0.2)
+        log("frame never appeared at %s" % host_path)
 
     def close(self):
         try:
@@ -236,7 +252,7 @@ def main():
     user = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("SETUP_USERNAME", "docker")
     password = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("SETUP_PASSWORD", "admin")
 
-    d = Driver(sock)
+    d = Driver(sock, os.path.dirname(os.path.abspath(prefix)) or ".")
     log("connected; driving by coordinates only")
 
     # The guest is still booting into the wizard for the first half-minute or so. Nothing is
