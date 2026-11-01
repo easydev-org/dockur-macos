@@ -1074,14 +1074,41 @@ def main():
                     main.country_phase = None
                     continue
                 # No button yet: press Return, which commits a list selection here.
-                screen.key("ret")
-                time.sleep(4)
+                # THE HIGHLIGHT IS THERE; THE COMMIT IS WHAT IS MISSING.
+                #
+                # Keyboard navigation works - 'highlight reached United States after 1
+                # steps' - but Return on its own does not commit it, and the pane comes
+                # back with the list merely redrawn:
+                #
+                #   step 14: highlight reached 'United States' after 1 steps
+                #   step 14: after choosing ... -> Select Your Country or Region Tristan ...
+                #
+                # macOS commits a list selection with Return TWICE (the first closes the
+                # field editor, the second accepts), and the pane's Continue then enables.
+                # Space is sent as well, because on some builds Space is the commit and
+                # Return only dismisses. Then the pane is read for a button.
+                for commit in ("ret", "ret", "spc"):
+                    screen.key(commit)
+                    time.sleep(1.5)
+                time.sleep(3)
                 btn, label = find_button(screen.text(
                     screen.grab("%s-s%d-countryret" % (prefix, step))))
                 if btn is not None:
-                    log("step %d: Return enabled it; clicking %r at %s" % (step, label, btn))
+                    log("step %d: button enabled after commit; clicking %r at %s"
+                        % (step, label, btn))
                     screen.click(btn[0], btn[1])
                     time.sleep(8)
+                else:
+                    # Last resort: Tab to the button and press Space, which reaches a
+                    # control that a click cannot.
+                    log("step %d: no button after commit; tabbing to it" % step)
+                    for _ in range(6):
+                        screen.key("tab")
+                        time.sleep(0.6)
+                    screen.key("spc")
+                    time.sleep(6)
+                    log("step %d: after tab+space -> %s"
+                        % (step, signature_from(screen, prefix, step)))
                 main.country_phase = None
                 continue
 
