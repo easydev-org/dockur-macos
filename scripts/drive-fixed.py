@@ -52,9 +52,7 @@ UNITED_STATES = (764, 615)
 #   (4) Set up as new                              y=714   <- the one wanted
 # Left-aligned at x=743, where the radio marks sit.
 SET_UP_AS_NEW = (743, 714)
-# Card 1, where the selection starts. Used only to give the group keyboard focus before the
 # Down presses - clicking card 4 first and then pressing Down three times would run off the end.
-TRANSFER_CARD_1 = (743, 640)
 
 # The two-button pane. Both pills measured at y=792:
 #   x=1071..1193  Not Now   centre (1132, 796)
@@ -227,17 +225,12 @@ def set_up_as_new(d):
     later step walked into the pairing flow.
     """
     d.wait(8, "transfer pane settles")
-    # THREE DOWNS, NOT A COORDINATE.
+    # CLICK CARD 4 DIRECTLY.
     #
-    # The four cards are a radio group and the first is selected when the pane appears, so three
-    # Down presses walk the selection to the fourth - 'Set up as new' - wherever the rows happen
-    # to be drawn. A click at a measured y depends on the pane having finished drawing and on
-    # the row heights being what they were; a Down depends on neither.
-    #
-    # The click before the first Down only gives the group keyboard focus. Aimed at the label of
-    # the selected card, it is harmless if the selection is already there.
-    d.click(TRANSFER_CARD_1, "focus the card group (card 1)", settle=1.0)
-    d.key("down", settle=0.8, times=3, shot=True)
+    # Three Downs also work, but a click at the measured position needs nothing else to be true:
+    # it selects the row it lands on. Card 4's label runs y=707..722, so its centre is y=714, and
+    # the radio column is at x=743.
+    d.click(SET_UP_AS_NEW, "card 4, Set up as new", settle=2.5, shot=True)
     d.click(CONTINUE, "transfer Continue", settle=8.0)
 
 

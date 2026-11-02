@@ -333,6 +333,9 @@ jobs:
             # qemu in the image, driver on this host, joined by the QMP socket that
             # the bind mount makes visible to both.
             docker run -d --name driver \
+              # Published so ffmpeg on this host can record the screen. qemu listens on
+              # 127.0.0.1:5900 inside the container; -p maps it out.
+              -p 127.0.0.1:5900:5900 \
               --device=/dev/kvm \
               --entrypoint sh \
               -v "$GITHUB_WORKSPACE/vm:/vm" \
@@ -347,6 +350,24 @@ jobs:
               docker ps --filter name=driver --format '{{.Status}}' || true
             done
             ls -la frames/ || true
+
+            # RECORD THE SCREEN, AT A REAL FRAME RATE.
+            #
+            # screendump costs 0.2-1.6s per frame and would perturb the action timing, so it
+            # cannot produce a 1 fps recording. VNC can: ffmpeg connects to the port published
+            # above and captures whatever qemu draws, at whatever rate it draws it, without the
+            # guest knowing.
+            #
+            # 2 fps for the wizard's transitions, hardware acceleration off because there is no
+            # GPU, and a time limit because ffmpeg otherwise waits for a stream that never ends.
+            # The recording runs in the background and is simply killed when driving finishes.
+            sudo apt-get install -y -qq ffmpeg || true
+            ffmpeg -y -loglevel warning               -f vnc -r 2 -i 127.0.0.1:5900               -t 2400 -r 2 -pix_fmt yuv420p               frames/session.mp4 > frames/ffmpeg.log 2>&1 &
+            FFMPEG_PID=
+            echo "recording started as pid "
+            sleep 3
+            ls -la frames/session.mp4 2>/dev/null || true
+            tail -5 frames/ffmpeg.log 2>/dev/null || true
 
             # The socket is created by root inside the container, so connecting to
             # it needs the same side of the boundary: without this the driver dies
@@ -371,10 +392,22 @@ jobs:
             else
               sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
             fi
+            # Stop recording once the driving is done, and let ffmpeg finalise the moov atom -
+            # a SIGKILL here leaves a file no player can open, which is why this is a normal
+            # terminate followed by a wait rather than a kill.
+            sudo kill -TERM "$FFMPEG_PID" 2>/dev/null || true
+            for _ in $(seq 1 30); do
+              kill -0 "$FFMPEG_PID" 2>/dev/null || break
+              sleep 1
+            done
+            sleep 2
             sudo chown -R "$(id -u):$(id -g)" frames || true
 
             echo "=== frames ==="
             ls -la frames | tail -25 || true
+            echo "=== recording ==="
+            ls -la frames/session.mp4 2>/dev/null || echo "no recording"
+            ffprobe -v error -show_entries format=duration,size -of default=nw=1 frames/session.mp4 2>/dev/null || true
             docker stop -t 30 driver >/dev/null 2>&1 || true
 
       # Re-publishing an existing disk to a new tag.

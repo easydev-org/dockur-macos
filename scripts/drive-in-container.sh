@@ -70,7 +70,11 @@ qemu-system-x86_64 \
   -smp 4,sockets=1,dies=1,cores=4,threads=1 \
   -m 8G \
   -name macOS,process=macos \
-  -display none \
+  # VNC for recording. -display none offers only screendump, which costs 0.2-1.6s
+  # per frame - below the 1 fps a usable recording needs, and it perturbs the action
+  # timing the sequence depends on. VNC is passive: the guest behaves the same whether
+  # or not anyone is watching, and ffmpeg can capture it at a steady rate.
+  -vnc 127.0.0.1:0 \
   -vga vmware \
   -monitor "unix:$MON,server=on,wait=off,nodelay=on" \
   -qmp "unix:$MON.qmp,server=on,wait=off" \
