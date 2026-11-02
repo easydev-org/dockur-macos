@@ -67,12 +67,33 @@ NOT_NOW = (604, 810)
 # The 'Are you sure you want to skip sign in?' sheet - Skip is the right-hand of its pair.
 SHEET_SKIP = (1026, 634)
 
-# The account form, top to bottom.
-FULL_NAME = (942, 455)
-ACCOUNT_NAME = (942, 486)
-PASSWORD = (896, 528)
-VERIFY = (1057, 528)
-HINT = (978, 562)
+# The account form, measured from fx-1278 of the run that reached it. OCR gives the LABELS,
+# which sit 20px above their fields:
+#
+#   Full Name                                   label y=493   field y≈515
+#   Account Name                                label y=528   field y≈550
+#   This will be the name of your home folder.  y=550
+#   Password        Verify Password             label y=596   field y≈618
+#   Hint (Optional)                             label y≈640
+#
+# The previous values were 38-68px too high - every click landed on the label above the field it
+# meant, which is why the full name received 'hi' instead of 'docker' and the password boxes
+# stayed empty.
+# A vertical scan at x=900 of fx-1278 gives the field boxes directly - each is a band of white
+# between two (243,243,243) dividers:
+#
+#   y=486..510   Full Name field
+#   y=520..544   Account Name field
+#   y=614..622   Password fields
+#   y=658..     Hint field
+#
+# The previous values were 38-68px high, so each click landed on the label above the box it
+# meant. That is why the full name received 'hi' instead of 'docker'.
+FULL_NAME = (900, 498)
+ACCOUNT_NAME = (900, 532)
+PASSWORD = (860, 618)
+VERIFY = (1020, 618)
+HINT = (900, 667)
 
 
 def _slug(text):
@@ -216,10 +237,13 @@ class Fixed:
             time.sleep(0.5)
             qmpmod.key(self.q, "backspace")
             time.sleep(0.4)
+        # 24 backspaces at 0.04s is a machine-gun; a field that validates as it is edited drops
+        # most of them and keeps whatever it decided was valid. 0.12s is still fast enough to
+        # clear a short value and slow enough to be seen.
         for _ in range(24):
             qmpmod.key(self.q, "backspace")
-            time.sleep(0.04)
-        time.sleep(0.6)
+            time.sleep(0.12)
+        time.sleep(0.8)
 
     def scroll(self, notches, x=960, y=550):
         """Positive notches scroll down, per qmp.scroll's docstring."""
@@ -313,17 +337,30 @@ def privacy_then_not_now(d):
 
 
 def account(d, user, password):
-    """The five-field form, then Continue."""
+    """The account form, then Continue.
+
+    ONLY THE SHORT NAME IS LEFT ALONE. macOS fills Account Name from Full Name as you type, so
+    clicking into it, clearing it and retyping fights the auto-fill - and a field it thinks is
+    invalid is enough for the wizard to refuse with
+
+        You haven't provided all of the requested information.
+
+    which is exactly what the last run showed. The other four are typed: full name, password,
+    verify, and a hint so the password can be recovered.
+
+    0.4s per character rather than 0.25: this form validates as it is typed, and characters
+    arriving faster than it can check get dropped.
+    """
     d.wait(6, "account pane settles")
     for xy, value, label in (
             (FULL_NAME, user, "full name"),
-            (ACCOUNT_NAME, user, "account name"),
             (PASSWORD, password, "password"),
             (VERIFY, password, "verify"),
             (HINT, "hint", "hint")):
-        d.click(xy, label, settle=0.8)
+        d.click(xy, label, settle=1.0)
         d.clear_field()
-        d.keys(value, per_char=0.25)
+        d.keys(value, per_char=0.4)
+        d.wait(0.8, "let the field settle")
     d.click(CONTINUE, "account Continue", settle=3.0)
 
 

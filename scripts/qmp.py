@@ -129,40 +129,58 @@ def move(q, x, y):
 
 
 def click(q, x, y):
+    """Move, then press and release in one call.
+
+    Same reason as key(): the press and the release must not be separable by another thread,
+    or the guest sees a button held for an arbitrary time - which it reads as a drag or as no
+    click at all.
+    """
     move(q, x, y)
-    time.sleep(0.3)
+    time.sleep(0.25)
     q.execute("input-send-event", events=[
-        {"type": "btn", "data": {"down": True, "button": "left"}}])
-    time.sleep(0.15)
-    q.execute("input-send-event", events=[
-        {"type": "btn", "data": {"down": False, "button": "left"}}])
+        {"type": "btn", "data": {"down": True, "button": "left"}},
+        {"type": "btn", "data": {"down": False, "button": "left"}},
+    ])
 
 
-def key(q, qcode):
+def key(q, qcode, hold=0.06):
+    """Press and release one key.
+
+    BOTH HALVES IN ONE CALL, AND THAT MATTERS NOW.
+
+    This used to send key-down, sleep 0.08s, then key-up - two separate execute() calls on a
+    socket that the capture thread also holds. The lock makes each call atomic, but it cannot
+    make the PAIR atomic: the capture thread would take the lock between them, and the guest
+    saw a key held for an arbitrary time. That is why the account form received "hi" where
+    "docker" was typed, and why the password fields came out empty - a held key with a late
+    release does not type a character, it modifies the next one.
+
+    Sending down and up as one events list keeps the pair inside a single lock acquisition.
+    """
     q.execute("input-send-event", events=[
-        {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}}])
-    time.sleep(0.08)
-    q.execute("input-send-event", events=[
-        {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
+        {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}},
+        {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}},
+    ])
+    time.sleep(hold)
 
 
 def key_combo(q, *qcodes):
     """Press several keys together, e.g. key_combo(q, "meta_l", "spc") for Cmd-Space.
 
-    QMP delivers held state, so a chord is the modifiers down, the key down and up,
-    then the modifiers up in reverse order. Sending them as separate presses - which
-    is what key() does - produces Cmd, release, Space, release, which macOS reads as
-    two unrelated keystrokes rather than a shortcut.
+    QMP delivers held state, so a chord is the modifiers down, the key down and up, then the
+    modifiers up in reverse order. All of it goes in ONE events list: sent as separate
+    execute() calls - which is what this did before - the capture thread can take the lock
+    between them, and macOS then sees the modifier released at some arbitrary later moment.
+    That turns a shortcut into two unrelated keystrokes, or into nothing.
     """
+    events = []
     for qcode in qcodes:
-        q.execute("input-send-event", events=[
-            {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}}])
-        time.sleep(0.05)
-    time.sleep(0.1)
+        events.append({"type": "key",
+                       "data": {"down": True, "key": {"type": "qcode", "data": qcode}}})
     for qcode in reversed(qcodes):
-        q.execute("input-send-event", events=[
-            {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
-        time.sleep(0.05)
+        events.append({"type": "key",
+                       "data": {"down": False, "key": {"type": "qcode", "data": qcode}}})
+    q.execute("input-send-event", events=events)
 
 
 def scroll(q, x, y, notches, dx_notches=0):
