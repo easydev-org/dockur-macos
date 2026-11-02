@@ -43,10 +43,6 @@ if [ -s "$VMDIR/setup.dmg" ]; then
 fi
 
 if [ -n "$SETUP_DMG" ]; then
-  # format=dmg is not optional: without it qemu probes the file, decides it cannot
-  # identify a raw image of that size, and refuses to open it. dockur passes exactly
-  # this combination (file=...,format=dmg,cache=unsafe,readonly=on) so it is copied
-  # rather than invented.
   SETUP_ARG="-drive file=$SETUP_DMG,id=SetupDisk,format=dmg,cache=unsafe,readonly=on,if=none -device virtio-blk-pci,drive=SetupDisk,bus=pcie.0,addr=0x6,bootindex=8"
 else
   SETUP_ARG=""
@@ -61,6 +57,15 @@ rm -f "$MON" "$MON.qmp"
 # place and the result is already on the host when this exits. Copying 11 GiB into
 # the container first would double the disk requirement for no benefit.
 
+# VNC for recording. screendump costs 0.2-1.6s per frame and would perturb the action
+# timing, so it cannot give 1 fps; VNC is passive and ffmpeg captures it steadily.
+# A plain port index, because the 127.0.0.1:0 form came back as
+# "VNC server running on ::1:5900" and qemu died before creating its QMP socket -
+# which read as a hang rather than as a bad argument.
+#
+# Nothing commented inside the command itself: a # between continuation lines ends it,
+# which is what broke the docker run in the workflow.
+
 qemu-system-x86_64 \
   -nodefaults \
   -machine type=q35,smm=off,graphics=off,vmport=off,dump-guest-core=off,hpet=off,accel=kvm \
@@ -70,11 +75,7 @@ qemu-system-x86_64 \
   -smp 4,sockets=1,dies=1,cores=4,threads=1 \
   -m 8G \
   -name macOS,process=macos \
-  # VNC for recording. -display none offers only screendump, which costs 0.2-1.6s
-  # per frame - below the 1 fps a usable recording needs, and it perturbs the action
-  # timing the sequence depends on. VNC is passive: the guest behaves the same whether
-  # or not anyone is watching, and ffmpeg can capture it at a steady rate.
-  -vnc 127.0.0.1:0 \
+  -vnc :0 \
   -vga vmware \
   -monitor "unix:$MON,server=on,wait=off,nodelay=on" \
   -qmp "unix:$MON.qmp,server=on,wait=off" \
