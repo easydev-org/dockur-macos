@@ -109,6 +109,21 @@ class QMP:
                     return msg
                 # An event, or a reply meant for another request: keep reading.
 
+    def _send(self, events):
+        """Send one input-send-event WITHOUT taking the lock.
+
+        Only for callers that already hold it and need several sends to be inseparable -
+        key() and key_combo() use this so a real gap can sit between press and release while
+        the capture thread still cannot slip in between.
+        """
+        payload = {"execute": "input-send-event", "arguments": {"events": events},
+                   "id": -1}
+        self.sock.sendall((json.dumps(payload) + "\n").encode())
+        while True:
+            msg = self._read_message()
+            if msg.get("id") == -1:
+                return msg
+
     def close(self):
         try:
             self.sock.close()
@@ -128,59 +143,59 @@ def move(q, x, y):
     ])
 
 
-def click(q, x, y):
-    """Move, then press and release in one call.
+def click(q, x, y, hold=0.09):
+    """Move, press, release - with a real gap, and the pair insulated from other threads.
 
-    Same reason as key(): the press and the release must not be separable by another thread,
-    or the guest sees a button held for an arbitrary time - which it reads as a drag or as no
-    click at all.
+    Same reasoning as key(). Sending down and up in one batch removed the gap and produced
+    clicks the guest did not register; sending them as two unlocked calls let the capture
+    thread sit between them and produce a drag or nothing.
     """
     move(q, x, y)
     time.sleep(0.25)
-    q.execute("input-send-event", events=[
-        {"type": "btn", "data": {"down": True, "button": "left"}},
-        {"type": "btn", "data": {"down": False, "button": "left"}},
-    ])
+    with q._lock:
+        q._send([{"type": "btn", "data": {"down": True, "button": "left"}}])
+        time.sleep(hold)
+        q._send([{"type": "btn", "data": {"down": False, "button": "left"}}])
 
 
 def key(q, qcode, hold=0.06):
-    """Press and release one key.
+    """Press and release one key, with a real gap between them that no other thread can fill.
 
-    BOTH HALVES IN ONE CALL, AND THAT MATTERS NOW.
+    TWO FAILURES, TWO OPPOSITE MISTAKES.
 
-    This used to send key-down, sleep 0.08s, then key-up - two separate execute() calls on a
-    socket that the capture thread also holds. The lock makes each call atomic, but it cannot
-    make the PAIR atomic: the capture thread would take the lock between them, and the guest
-    saw a key held for an arbitrary time. That is why the account form received "hi" where
-    "docker" was typed, and why the password fields came out empty - a held key with a late
-    release does not type a character, it modifies the next one.
+    First this was key-down, sleep, key-up as separate execute() calls - so the capture thread
+    could take the lock between them, and the guest saw a key held for an arbitrary time. A
+    held key with a late release does not type a character, it modifies the next one; that is
+    how the account form received "hi" where "docker" was typed.
 
-    Sending down and up as one events list keeps the pair inside a single lock acquisition.
+    Then I sent both events in ONE call, which removes the gap entirely - and macOS ignores a
+    key whose release arrives in the same batch as its press.
+
+    So: hold the lock, send the press, sleep, send the release. The pair is atomic with
+    respect to other threads, and the gap is real.
     """
-    q.execute("input-send-event", events=[
-        {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}},
-        {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}},
-    ])
-    time.sleep(hold)
+    with q._lock:
+        q._send([{"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": qcode}}}])
+        time.sleep(hold)
+        q._send([{"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
 
 
-def key_combo(q, *qcodes):
+def key_combo(q, *qcodes, hold=0.1):
     """Press several keys together, e.g. key_combo(q, "meta_l", "spc") for Cmd-Space.
 
-    QMP delivers held state, so a chord is the modifiers down, the key down and up, then the
-    modifiers up in reverse order. All of it goes in ONE events list: sent as separate
-    execute() calls - which is what this did before - the capture thread can take the lock
-    between them, and macOS then sees the modifier released at some arbitrary later moment.
-    That turns a shortcut into two unrelated keystrokes, or into nothing.
+    Same shape as key(): one lock, real gaps inside it. Modifiers go down, the chord is held,
+    then everything comes up in reverse - and no other thread can interleave with any of it.
     """
-    events = []
-    for qcode in qcodes:
-        events.append({"type": "key",
-                       "data": {"down": True, "key": {"type": "qcode", "data": qcode}}})
-    for qcode in reversed(qcodes):
-        events.append({"type": "key",
-                       "data": {"down": False, "key": {"type": "qcode", "data": qcode}}})
-    q.execute("input-send-event", events=events)
+    with q._lock:
+        for qcode in qcodes:
+            q._send([{"type": "key",
+                      "data": {"down": True, "key": {"type": "qcode", "data": qcode}}}])
+            time.sleep(0.05)
+        time.sleep(hold)
+        for qcode in reversed(qcodes):
+            q._send([{"type": "key",
+                      "data": {"down": False, "key": {"type": "qcode", "data": qcode}}}])
+            time.sleep(0.05)
 
 
 def scroll(q, x, y, notches, dx_notches=0):
