@@ -65,7 +65,28 @@ class RFB:
         header = self._recv(24)
         self.width, self.height = struct.unpack("!HH", header[:4])
         log("desktop %dx%d" % (self.width, self.height))
+        self.set_pixel_format()
+        self.set_encodings()
 
+
+    def set_pixel_format(self):
+        """Choose the byte layout. RFB has no default, and without this the server
+
+        sends nothing. 32bpp, depth 24, little-endian, true colour, with the usual
+        red/green/blue shifts - the same layout qemu uses for its own console."""
+        body = struct.pack("!BBBBHHHBBBBBB",
+                           32, 24, 0, 1,
+                           255, 255, 255,
+                           16, 8, 0,
+                           0, 0, 0)
+        self.sock.sendall(bytes([0]) + b"\x00\x00\x00" + body)
+
+    def set_encodings(self):
+        """Allow only RAW (0). Left empty, the server has nothing it may send;
+
+        asking for RAW also means read_frame gets uncompressed pixels it can copy
+        straight into a PPM without a decoder."""
+        self.sock.sendall(struct.pack("!BBH", 2, 0, 1) + struct.pack("!i", 0))
     def request_update(self, incremental=0):
         self.sock.sendall(
             struct.pack("!BBHHHH", 3, incremental, 0, 0, self.width, self.height))
