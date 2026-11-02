@@ -126,6 +126,18 @@ def wait_for_qmp(frames, attempts=40, pause=5):
     raise SystemExit("the QMP socket never appeared")
 
 
+def measure_screendump(frames):
+    """Report how long one screendump takes, before committing to a capture rate.
+
+    The OCR driver sleeps 1.5s after each dump, and the "0.2-1.6s per frame" figure in the
+    comments includes that sleep. Only a measurement decides whether a 1 fps capture through
+    QMP is possible here: VNC was tried first and delivered nothing, with the recorder waiting
+    120 seconds for a first frame while the guest was drawing happily.
+    """
+    sock = os.path.join(frames, "monitor.sock")
+    run([sys.executable, "scripts/probe-screendump.py", sock, frames])
+
+
 def start_recording(frames, seconds=2400, fps=2):
     """Start the VNC recorder as a child process, returning it.
 
@@ -239,6 +251,7 @@ def main():
 
     start_driver(args.image, args.workspace)
     wait_for_qmp(frames)
+    measure_screendump(frames)
     recorder = start_recording(frames, seconds=args.record_seconds)
 
     code = drive(frames, args.driver)
