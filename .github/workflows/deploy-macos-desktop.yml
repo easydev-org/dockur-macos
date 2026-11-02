@@ -305,115 +305,19 @@ jobs:
           name: setup-assistant-drive-${{ github.event.inputs.publish_tag }}
           interval: "10"
           command: |
-            set -eu
-            IMG="${{ steps.vmimg.outputs.image }}"
-            mkdir -p frames
-            chmod 777 frames
-
-            # OCR runs on this host, so it needs tools the launcher image does not
-            # carry. tesseract is in OSX-KVM's own dependency list for exactly this
-            # job, and reading the screen is what every coordinate guess here was
-            # missing.
-            sudo apt-get install -y -qq tesseract-ocr
-            # Prove OCR works before the driver depends on it. A silent OCR failure
-            # reads exactly like a blank screen, and that cost two runs.
-            tesseract --version | head -1
-            echo Continue > /tmp/ocrtest.txt
-            sudo python3 -c "import subprocess; print(subprocess.run(['tesseract','/tmp/ocrtest.txt','stdout'],capture_output=True,text=True).stdout.strip())"
-
-            # /dev/kvm exists on the runner but its group may not be applied yet.
-            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-            sudo udevadm control --reload-rules || true
-            sudo udevadm trigger --name-match=kvm || true
-            sudo chmod 666 /dev/kvm || true
-
-            chmod +x scripts/drive-in-container.sh scripts/drive-ocr.py scripts/drive-coords.py scripts/drive-fixed.py scripts/qmp.py scripts/ppm2png.py
-            docker rm -f driver >/dev/null 2>&1 || true
-
-            # qemu in the image, driver on this host, joined by the QMP socket that
-            # the bind mount makes visible to both.
-            # The VNC port is published so ffmpeg on this host can record the screen. qemu
-            # listens on 127.0.0.1:5900 inside the container; -p maps it out. The comment sits
-            # ABOVE the command on purpose: a comment between continuations ends the command,
-            # which is exactly what broke this step - docker run received no image.
-            docker run -d --name driver \
-              -p 127.0.0.1:5900:5900 \
-              --device=/dev/kvm \
-              --entrypoint sh \
-              -v "$GITHUB_WORKSPACE/vm:/vm" \
-              -v "$GITHUB_WORKSPACE/frames:/frames" \
-              -v "$GITHUB_WORKSPACE/scripts:/scripts:ro" \
-              "$IMG" /scripts/drive-in-container.sh
-
-            # Wait for qemu to create the socket, then drive it.
-            for i in $(seq 1 40); do
-              [ -S frames/monitor.sock.qmp ] && break
-              sleep 5
-              docker ps --filter name=driver --format '{{.Status}}' || true
-            done
-            ls -la frames/ || true
-
-            # RECORD THE SCREEN, AT A REAL FRAME RATE.
-            #
-            # screendump costs 0.2-1.6s per frame and would perturb the action timing, so it
-            # cannot produce a 1 fps recording. VNC can: ffmpeg connects to the port published
-            # above and captures whatever qemu draws, at whatever rate it draws it, without the
-            # guest knowing.
-            #
-            # 2 fps for the wizard's transitions, hardware acceleration off because there is no
-            # GPU, and a time limit because ffmpeg otherwise waits for a stream that never ends.
-            # The recording runs in the background and is simply killed when driving finishes.
-            sudo apt-get install -y -qq ffmpeg || true
-            ffmpeg -y -loglevel warning\
-              -f vnc -r 2 -i 127.0.0.1:5900\
-              -t 2400 -r 2 -pix_fmt yuv420p\
-              frames/session.mp4 > frames/ffmpeg.log 2>&1 &
-            FFMPEG_PID=$!
-            echo "recording started as pid $FFMPEG_PID"
-            sleep 3
-            ls -la frames/session.mp4 2>/dev/null || true
-            tail -5 frames/ffmpeg.log 2>/dev/null || true
-
-            # The socket is created by root inside the container, so connecting to
-            # it needs the same side of the boundary: without this the driver dies
-            # on PermissionError at connect(), having read nothing.
-            # WANT_SSH is read by the driver. Unset means stage 2 only: drive the wizard to
-            # the desktop and publish. Stage 3 sets it to 1 and turns Remote Login on
-            # against a published desktop disk.
-            # WHICH DRIVER. drive-ocr.py reads each pane and decides; it works on 14 and 15,
-            # where every pane carries a findable label. On 26 the privacy pane's Continue
-            # opens a pairing handshake whose only exit - Not Now - lives about two seconds
-            # before the failure alert replaces it, which is too short for a screendump and a
-            # tesseract pass. That release is driven by coordinates instead: a fixed pane
-            # order, each step a click, a key or a scroll at a measured position.
-            if [ "${{ inputs.force_coords }}" = "true" ]; then
-              # drive-fixed.py: fixed clicks, keys and scrolls. It takes no screenshot and reads
-              # no pixel - the sequence and its delays were measured once, offline.
-              echo "using drive-fixed.py (fixed sequence, no reads)"
-              sudo python3 scripts/drive-fixed.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames" || true
-            elif [ "${{ inputs.force_coords }}" = "coords" ]; then
-              echo "using drive-coords.py (coordinates, with picture checks)"
-              sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-coords.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
-            else
-              sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
-            fi
-            # Stop recording once the driving is done, and let ffmpeg finalise the moov atom -
-            # a SIGKILL here leaves a file no player can open, which is why this is a normal
-            # terminate followed by a wait rather than a kill.
-            sudo kill -TERM "$FFMPEG_PID" 2>/dev/null || true
-            for _ in $(seq 1 30); do
-              kill -0 "$FFMPEG_PID" 2>/dev/null || break
-              sleep 1
-            done
-            sleep 2
-            sudo chown -R "$(id -u):$(id -g)" frames || true
-
-            echo "=== frames ==="
-            ls -la frames | tail -25 || true
-            echo "=== recording ==="
-            ls -la frames/session.mp4 2>/dev/null || echo "no recording"
-            ffprobe -v error -show_entries format=duration,size -of default=nw=1 frames/session.mp4 2>/dev/null || true
-            docker stop -t 30 driver >/dev/null 2>&1 || true
+            # ALL OF IT IS PYTHON. This step used to be 109 lines of shell, and four
+            # consecutive runs died on shell syntax rather than on anything the guest
+            # did: a pid capture that lost its dollar sign, a reference to it that lost
+            # the same, and a comment that ended a docker run between continuation lines.
+            # scripts/drive-session.py does the same work with argv lists and files.
+            sudo apt-get install -y -qq tesseract-ocr ffmpeg || true
+            DRIVER=fixed
+            if [ "${{ inputs.force_coords }}" = "coords" ]; then DRIVER=ocr; fi
+            sudo WANT_SSH="${{ github.event.inputs.want_ssh }}" \
+              python3 scripts/drive-session.py \
+                --image "${{ steps.vmimg.outputs.image }}" \
+                --workspace "$GITHUB_WORKSPACE" \
+                --driver "$DRIVER" || true
 
       # Re-publishing an existing disk to a new tag.
       #
