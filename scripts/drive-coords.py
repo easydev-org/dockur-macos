@@ -73,6 +73,52 @@ VERIFY = (1057, 528)
 HINT = (978, 562)
 
 
+def find_button_row(ppm, y_lo=780, y_hi=825):
+    """Locate the wizard's button pills on one frame by their fill colour.
+
+    OCR cannot see these. On the transfer pane both buttons are grey-on-grey - (233,233,233)
+    fill with dark lettering - and tesseract returned nothing at psm 3, 6, 7, 11 or 13, on the
+    whole frame and on a 3x crop. A colour scan does not care about contrast:
+
+      y=792:  x=1071..1193  (233,233,233)   -> one pill
+              x=1215..1337  (233,233,233)   -> the next
+              x=1193..1215  background      -> the gap between them
+
+    Returns [(centre_x, centre_y), ...] left to right, empty if the row is not there.
+    """
+    got = _read_ppm(ppm)
+    if not got:
+        return []
+    w, h, data = got
+    rows = []
+    for y in range(y_lo, min(y_hi, h)):
+        span = []
+        for x in range(700, 1450):
+            i = (y * w + x) * 3
+            if i + 2 >= len(data):
+                break
+            r, g, b = data[i], data[i + 1], data[i + 2]
+            if abs(r - 233) <= 10 and abs(g - 233) <= 10 and abs(b - 233) <= 10:
+                span.append(x)
+        if len(span) > 60:
+            rows.append((y, span))
+    if not rows:
+        return []
+    # One representative row: the longest run, which is the middle of the pills.
+    y, span = max(rows, key=lambda t: len(t[1]))
+    pills = []
+    start = span[0]
+    prev = span[0]
+    for x in span[1:]:
+        if x - prev > 8:
+            if prev - start > 60:
+                pills.append(((start + prev) // 2, y))
+            start = x
+        prev = x
+    if prev - start > 60:
+        pills.append(((start + prev) // 2, y))
+    return pills
+
 def log(msg):
     print("[xy %s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
@@ -408,8 +454,29 @@ def transfer_pane_two_buttons(d, prefix):
     does nothing at all; Not Now is the only control that moves the wizard. The previous version
     pressed Continue first and then aimed at Not Now, which is exactly backwards.
     """
-    log("transfer pane: Not Now only, Continue is disabled here")
-    d.click(*CODE_NOT_NOW, settle=2.0, why="Not Now (Continue is grey)")
+    # THE BUTTONS ARE FOUND BY COLOUR, NOT BY OCR.
+    #
+    # On this pane both pills are (233,233,233) with dark lettering, and tesseract returns
+    # nothing for either at psm 3, 6, 7, 11 or 13 - whole frame or 3x crop. A colour scan of
+    # the button row finds them immediately:
+    #
+    #   x=1071..1193  -> Not Now     centre (1132, 796)
+    #   x=1215..1337  -> Continue    centre (1276, 796)
+    #
+    # The leftmost is Not Now. Continue is disabled until a card is chosen, so it is never
+    # the one to press on this pane.
+    shot = d.shot(prefix, "transfer-buttons")
+    pills = find_button_row(shot) if shot else []
+    log("button row found: %s" % (pills,))
+    # Drop anything right of the window (a stray pill-shaped region in the desktop behind).
+    pills = [p for p in pills if p[0] < 1360]
+    if len(pills) >= 2:
+        target = pills[0]
+        log("pressing the left button, Not Now, at %s" % (target,))
+        d.click(target[0], target[1], settle=2.5, why="Not Now (leftmost pill)")
+    else:
+        log("button row not read; falling back to the measured Not Now")
+        d.click(*CODE_NOT_NOW, settle=2.5, why="Not Now (measured)")
     d.shot(prefix, "transfer-notnow")
 
 
