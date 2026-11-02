@@ -362,9 +362,12 @@ jobs:
             # GPU, and a time limit because ffmpeg otherwise waits for a stream that never ends.
             # The recording runs in the background and is simply killed when driving finishes.
             sudo apt-get install -y -qq ffmpeg || true
-            ffmpeg -y -loglevel warning               -f vnc -r 2 -i 127.0.0.1:5900               -t 2400 -r 2 -pix_fmt yuv420p               frames/session.mp4 > frames/ffmpeg.log 2>&1 &
-            FFMPEG_PID=
-            echo "recording started as pid "
+            ffmpeg -y -loglevel warning\
+              -f vnc -r 2 -i 127.0.0.1:5900\
+              -t 2400 -r 2 -pix_fmt yuv420p\
+              frames/session.mp4 > frames/ffmpeg.log 2>&1 &
+            FFMPEG_PID=$!
+            echo "recording started as pid $FFMPEG_PID"
             sleep 3
             ls -la frames/session.mp4 2>/dev/null || true
             tail -5 frames/ffmpeg.log 2>/dev/null || true
