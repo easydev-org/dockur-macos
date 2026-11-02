@@ -138,65 +138,16 @@ def measure_screendump(frames):
     run([sys.executable, "scripts/probe-screendump.py", sock, frames])
 
 
-def start_recording(frames, seconds=2400, fps=5):
-    """Start a screendump recorder as a child process, returning it.
+def mux_video(frames, fps=5):
+    """Mux the captured frames into session.mp4, then remove them.
 
-    NOT VNC. Two runs of the RFB recorder connected, completed the handshake, sent
-    SetPixelFormat and SetEncodings, and then waited 120 seconds for a first framebuffer update
-    while the guest was drawing happily - the same guest whose frames QMP captures without
-    trouble. Whatever qemu's VNC is doing with this display, it does not deliver pictures.
-
-    screendump does, and the measurement settles the rate: 0.01s per 1920x1080 frame, against
-    the 0.2-1.6s the older comments claimed. That figure came from the OCR driver, whose grab()
-    sleeps 1.5s after each dump. At 0.01s a 5 fps capture costs five percent of one core.
+    The frames come from drive-fixed.py, which captures on its own QMP connection - there is
+    no recorder process to stop first. ffmpeg is used only as an image-sequence muxer, which
+    needs no network input support.
     """
-    argv = [
-        "python3", "scripts/screendump-record.py",
-        "--sock", os.path.join(frames, "monitor.sock"),
-        "--outdir", frames,
-        "--fps", str(fps), "--seconds", str(seconds),
-    ]
-    log("recording at %d fps via screendump" % fps)
-    log_path = os.path.join(frames, "rec.log")
-    with open(log_path, "w") as logf:
-        proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT)
-    time.sleep(4)
-    if proc.poll() is not None:
-        run(["tail", "-20", log_path])
-        log("recorder exited early")
-        return None
-    log("recorder running as pid %d" % proc.pid)
-    return proc
-
-
-def stop_recording(proc, frames, fps=5):
-    """Stop the recorder, then mux its frames into an mp4."""
-    if proc is not None:
-        log("stopping the recorder")
-        try:
-            proc.send_signal(signal.SIGTERM)
-        except OSError:
-            pass
-        for _ in range(20):
-            if proc.poll() is not None:
-                break
-            time.sleep(1)
-        if proc.poll() is None:
-            log("recorder ignored SIGTERM; killing")
-            proc.kill()
-            try:
-                proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
-    log_path = os.path.join(frames, "rec.log")
-    if os.path.exists(log_path):
-        log("--- rec.log ---")
-        with open(log_path) as fh:
-            for line in fh.read().splitlines()[-8:]:
-                log("  " + line)
     shots = sorted(n for n in os.listdir(frames)
                    if n.startswith("cap-") and n.endswith(".ppm"))
-    log("recorder produced %d frames" % len(shots))
+    log("muxing %d captured frames" % len(shots))
     out_path = os.path.join(frames, "session.mp4")
     if len(shots) < 2:
         log("not enough frames to mux a video")
@@ -211,6 +162,10 @@ def stop_recording(proc, frames, fps=5):
     code, out, err = run(argv)
     if os.path.exists(out_path):
         log("video: %.1f MB" % (os.path.getsize(out_path) / (1024.0 * 1024.0)))
+        code2, info, _ = run(["ffprobe", "-v", "error", "-show_entries",
+                              "format=duration", "-of", "default=nw=1", out_path], echo=False)
+        if info:
+            log(info.strip())
     else:
         log("muxing failed (exit %d)" % code)
     for name in shots:
@@ -254,9 +209,6 @@ def main():
                     help="launcher image holding qemu and the OpenCore assets")
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--driver", default="fixed", choices=("fixed", "ocr"))
-    ap.add_argument("--record-seconds", type=int, default=2400)
-    ap.add_argument("--record-grace", type=int, default=45,
-                    help="seconds to keep recording after a driver failure")
     args = ap.parse_args()
 
     log("session start")
@@ -266,20 +218,21 @@ def main():
     start_driver(args.image, args.workspace)
     wait_for_qmp(frames)
     measure_screendump(frames)
-    recorder = start_recording(frames, seconds=args.record_seconds)
 
+    # NO SEPARATE RECORDER PROCESS.
+    #
+    # A second connection to the QMP socket is served for the greeting and then not again, so
+    # the driver's own connect() blocked until it timed out:
+    #
+    #   File "qmp.py", line 52, in __init__
+    #     self.greeting = self._read_message()
+    #   TimeoutError: timed out
+    #
+    # The driver therefore records through the connection it already holds - see
+    # drive-fixed.py's start_capture() - and this session only muxes the frames afterwards.
     code = drive(frames, args.driver)
 
-    # LET THE RECORDING RUN ON AFTER THE DRIVER FINISHES.
-    #
-    # A driver that ends is not a guest that stopped drawing - and when it fails, the frames
-    # leading up to the failure are the ones worth watching. A grace period captures whatever
-    # the pane settles into before the guest is stopped.
-    if code != 0:
-        log("driver failed; recording %ds more before stopping" % args.record_grace)
-        time.sleep(args.record_grace)
-
-    stop_recording(recorder, frames)
+    mux_video(frames, fps=5)
     run(["sudo", "chown", "-R", "%d:%d" % (os.getuid(), os.getgid()), frames])
 
     log("frames in %s:" % frames)

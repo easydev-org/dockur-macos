@@ -27,6 +27,7 @@ Usage: drive-fixed.py <monitor.sock> [user] [password]
 
 import os
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -96,6 +97,54 @@ class Fixed:
         # goes wrong can be looked at afterwards, step by step.
         self.frames_dir = frames_dir
         self.shots = 0
+
+    def start_capture(self, fps=5):
+        """Record the screen from this same QMP connection, on a background thread.
+
+        THE QMP SOCKET CANNOT BE SHARED BETWEEN PROCESSES HERE.
+        A separate recorder process connected fine and captured 396 frames while the driver
+        died at its own connect() with
+
+            File "qmp.py", line 52, in __init__
+              self.greeting = self._read_message()
+            TimeoutError: timed out
+
+        qemu served the recorder's greeting and never sent the driver's, so the driver could not
+        even start. Rather than fight it, the driver records through the one connection it
+        already owns: a daemon thread that screendumps at a fixed rate between actions.
+
+        screendump costs about 0.02s, so 5 fps uses a tenth of a second per second of wall time.
+        """
+        if not self.frames_dir:
+            return
+        self.fps = fps
+        self.stop_capture = threading.Event()
+        self.captured = 0
+        self.capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.capture_thread.start()
+
+    def _capture_loop(self):
+        interval = 1.0 / float(max(1, self.fps))
+        while not self.stop_capture.is_set():
+            started = time.time()
+            self.shots += 1
+            leaf = "cap-%05d.ppm" % self.shots
+            try:
+                self.q.execute("screendump", filename="/frames/" + leaf)
+            except Exception:
+                time.sleep(0.3)
+                continue
+            self.captured += 1
+            spent = time.time() - started
+            if spent < interval:
+                time.sleep(interval - spent)
+
+    def end_capture(self):
+        if not getattr(self, "frames_dir", None):
+            return 0
+        self.stop_capture.set()
+        self.capture_thread.join(timeout=15)
+        return self.captured
 
     def shot(self, label):
         """Save one frame for the record. The picture is not examined here or anywhere else."""
@@ -303,6 +352,8 @@ def main():
 
     d = Fixed(sock, frames_dir if frames_dir else None)
     log("connected; fixed sequence, no reads")
+    d.start_capture(fps=5)
+    log("capturing at 5 fps on the same connection")
 
     # The guest takes a couple of minutes to reach the wizard. A wait, not a poll: the measured
     # duration, and the sequence starts after it.
@@ -317,7 +368,8 @@ def main():
     apple_account(d)
     tail(d)
 
-    log("sequence complete after %d actions, %d frames recorded" % (d.n, d.shots))
+    captured = d.end_capture()
+    log("sequence complete after %d actions, %d capture frames" % (d.n, captured))
     d.close()
 
 
