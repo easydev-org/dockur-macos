@@ -300,6 +300,7 @@ def country_pane(d, prefix):
     d.keys("united states", per_char=0.3, clear=False)
     d.key("pgdn", settle=0.8, times=5)
     d.key("pgup", settle=0.8)
+    # No Down here. frame-031 shows Down moves the highlight past United States to Uruguay.
 
     # THE LIST IS NOW SHOWING THE RIGHT ROWS, so click the row itself.
     #
@@ -322,10 +323,27 @@ def country_pane(d, prefix):
     # The row is clicked directly, at x=800 (inside the list, right of the radio column) and
     # y=615 (the middle of United States' 20px line). Return and a Tab-Space follow, because a
     # click on this list moves the selection in earlier runs without committing it.
-    log("country list is at the U section; clicking the United States row")
-    d.click(800, 615, settle=1.2, why="United States row")
-    d.key("ret", settle=1.0)
-    d.key("tab", settle=0.5, times=4)
+    # THE DOWN KEY WAS MOVING THE HIGHLIGHT OFF THE TARGET.
+    #
+    # frame-031, taken after exactly this sequence, reads:
+    #
+    #   highlighted: Uruguay            <- one row BELOW United States
+    #   Continue:    grey
+    #   mouse:       in the list, right of Turks & Caicos
+    #
+    # which says three things. The typing-and-paging already left the highlight ON United
+    # States (Down then moved it to the next row, Uruguay). The highlight is focus, not
+    # selection, so Continue stays grey either way. And the mouse is where the focus click
+    # put it.
+    #
+    # So the sequence ends without Down, and commits with Return, which is what a focused
+    # list row answers to. A direct click on the row follows as a second attempt, because a
+    # click alone moves the selection here without committing it - the two together cover
+    # both behaviours.
+    log("country list at the U section; committing without moving the highlight")
+    d.key("ret", settle=1.2)
+    d.click(800, 610, settle=1.2, why="United States row, to be sure")
+    d.key("ret", settle=1.2)
     d.key("spc", settle=2.5)
     d.shot(prefix, "country-after")
 
