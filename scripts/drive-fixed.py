@@ -73,18 +73,48 @@ VERIFY = (1057, 528)
 HINT = (978, 562)
 
 
+def _slug(text):
+    """A short filesystem-safe label from an action description."""
+    out = "".join(c if c.isalnum() else "-" for c in (text or "")[:34]).strip("-")
+    return out or "step"
+
+
 def log(msg):
     print("[fx %s] %s" % (time.strftime("%H:%M:%S"), msg), flush=True)
 
 
 class Fixed:
-    def __init__(self, sock):
+    def __init__(self, sock, frames_dir=None):
         # The .qmp suffix is required: drive-in-container.sh creates monitor.sock (HMP, plain
         # text) and monitor.sock.qmp (QMP, JSON), and parsing the first as JSON fails at once.
         if not sock.endswith(".qmp"):
             sock = sock + ".qmp"
         self.q = qmpmod.QMP(sock)
         self.n = 0
+        # Frames are RECORDED, NEVER READ. Nothing below inspects them; they exist so a run that
+        # goes wrong can be looked at afterwards, step by step.
+        self.frames_dir = frames_dir
+        self.shots = 0
+
+    def shot(self, label):
+        """Save one frame for the record. The picture is not examined here or anywhere else."""
+        if not self.frames_dir:
+            return
+        self.shots += 1
+        # qemu resolves 'filename' inside its own container, where the host frames directory is
+        # mounted at /frames. The host-side path is what gets waited for.
+        leaf = "fx-%03d-%s.ppm" % (self.shots, label)
+        try:
+            self.q.execute("screendump", filename="/frames/" + leaf)
+        except Exception as exc:
+            log("screendump failed at %s: %s" % (label, exc))
+            return
+        host = os.path.join(self.frames_dir, leaf)
+        for _ in range(25):
+            if os.path.exists(host):
+                return
+            time.sleep(0.2)
+        log("frame never appeared at %s" % host)
 
     def wait(self, seconds, why=""):
         log("wait %ds%s" % (seconds, (" - " + why) if why else ""))
@@ -95,13 +125,16 @@ class Fixed:
         log("#%d click (%d,%d) %s" % (self.n, xy[0], xy[1], why))
         qmpmod.click(self.q, xy[0], xy[1])
         time.sleep(settle)
+        self.shot("after-%02d-%s" % (self.n, _slug(why)))
 
-    def key(self, name, times=1, settle=0.5):
+    def key(self, name, times=1, settle=0.5, shot=False):
         self.n += 1
         log("#%d key %s x%d" % (self.n, name, times))
         for _ in range(times):
             qmpmod.key(self.q, name)
             time.sleep(settle)
+        if shot:
+            self.shot("after-%02d-key-%s" % (self.n, name))
 
     def keys(self, text, per_char=0.3):
         """Type one character at a time.
@@ -167,7 +200,7 @@ def pick_country(d):
     d.key("pgdn", times=5, settle=0.8)
     d.key("pgup", settle=0.8)
     d.click(UNITED_STATES, "the United States row")
-    d.key("ret", settle=2.5)
+    d.key("ret", settle=2.5, shot=True)
 
 
 def set_up_as_new(d):
@@ -184,7 +217,7 @@ def languages(d):
 
 def accessibility(d):
     d.wait(4)
-    d.key("ret", settle=1.5)
+    d.key("ret", settle=1.5, shot=True)
     d.click(CONTINUE, "accessibility Continue")
 
 
@@ -238,12 +271,13 @@ def tail(d):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit("usage: drive-fixed.py <monitor.sock> [user] [password]")
+        sys.exit("usage: drive-fixed.py <monitor.sock> [frames_dir] [user] [password]")
     sock = sys.argv[1]
-    user = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("SETUP_USERNAME", "docker")
-    password = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("SETUP_PASSWORD", "admin")
+    frames_dir = sys.argv[2] if len(sys.argv) > 2 else os.environ.get("FRAMES_DIR", "")
+    user = sys.argv[3] if len(sys.argv) > 3 else os.environ.get("SETUP_USERNAME", "docker")
+    password = sys.argv[4] if len(sys.argv) > 4 else os.environ.get("SETUP_PASSWORD", "admin")
 
-    d = Fixed(sock)
+    d = Fixed(sock, frames_dir if frames_dir else None)
     log("connected; fixed sequence, no reads")
 
     # The guest takes a couple of minutes to reach the wizard. A wait, not a poll: the measured
@@ -259,7 +293,7 @@ def main():
     apple_account(d)
     tail(d)
 
-    log("sequence complete after %d actions" % d.n)
+    log("sequence complete after %d actions, %d frames recorded" % (d.n, d.shots))
     d.close()
 
 

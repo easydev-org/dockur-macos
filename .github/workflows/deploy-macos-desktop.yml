@@ -48,6 +48,10 @@ on:
         description: "Drive by coordinates only (drive-coords.py) instead of reading panes. Needed on 26."
         required: false
         default: ""
+      frames_only:
+        description: "Run the fixed sequence for its screenshots and stop. Publish no disk."
+        required: false
+        default: ""
       republish_from:
         description: "Run id whose macos-desktop-disk should be re-published, skipping the VM entirely"
         required: false
@@ -360,7 +364,7 @@ jobs:
               # drive-fixed.py: fixed clicks, keys and scrolls. It takes no screenshot and reads
               # no pixel - the sequence and its delays were measured once, offline.
               echo "using drive-fixed.py (fixed sequence, no reads)"
-              sudo python3 scripts/drive-fixed.py "$GITHUB_WORKSPACE/frames/monitor.sock" || true
+              sudo python3 scripts/drive-fixed.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames" || true
             elif [ "${{ inputs.force_coords }}" = "coords" ]; then
               echo "using drive-coords.py (coordinates, with picture checks)"
               sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-coords.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
@@ -415,7 +419,7 @@ jobs:
       # The disk is the deliverable: if the wizard was completed, this is a disk
       # that boots straight to a desktop.
       - name: convert the finished disk
-        if: always() && github.event.inputs.republish_from == ''
+        if: always() && github.event.inputs.republish_from == '' && github.event.inputs.frames_only != 'true'
         run: |
           set -eux
           sudo chown "$(id -u):$(id -g)" vm/data.img 2>/dev/null || true
@@ -457,7 +461,7 @@ jobs:
       # registry under a name that means "ready to boot" would be a lie that the next
       # run silently relies on.
       - name: publish the desktop disk to ghcr
-        if: always()
+        if: always() && github.event.inputs.frames_only != 'true'
         run: |
           set -eux
           TAG="${{ github.event.inputs.publish_tag }}"
