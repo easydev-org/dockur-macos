@@ -30,6 +30,7 @@ for some backends, so this uses the documented 0..32767 range that QEMU accepts
 for absolute events and scales the requested pixel coordinates into it.
 """
 import json
+import threading
 import os
 import socket
 import sys
@@ -49,6 +50,20 @@ class QMP:
         self.sock.settimeout(30)
         self.sock.connect(path)
         self.buf = b""
+        # ONE LOCK PER CONNECTION.
+        #
+        # The driver's capture thread and its action thread share this socket - the recorder
+        # has to, because qemu greets only the first connection and never a second. Matching
+        # replies by id is not enough on its own: _read_message() consumes from a shared
+        # self.buf, so two threads reading at once interleave and each can end up with half a
+        # line. That produced:
+        #
+        #     qmp.py line 85, in execute
+        #     TimeoutError: timed out
+        #
+        # while the capture thread was mid-screendump. The lock makes a whole request-reply
+        # pair atomic, so the two threads take turns instead of splitting each other's bytes.
+        self._lock = threading.RLock()
         self.greeting = self._read_message()
         self.execute("qmp_capabilities")
 
@@ -64,28 +79,35 @@ class QMP:
     def execute(self, command, **arguments):
         """Send one command and return its reply, matched by request id.
 
-        THE ID MATTERS WHEN TWO PROGRAMS SHARE THE SOCKET. qemu accepts several connections,
-        and the recorder opens its own so that it can screendump five times a second without
-        colliding with the driver. Without an id, execute() took the next reply carrying
-        "return" - which belongs to whichever client asked first - and nothing stopped the two
-        from answering each other. That collision surfaced as:
+        THE WHOLE PAIR IS ATOMIC, AND THAT IS THE POINT.
 
+        The driver records through this connection - it has to, because qemu greets only the
+        first client and never a second, so a separate recorder process starved the driver at
+        its own connect(). That puts two threads on one socket: the capture thread
+        screendumping five times a second, the action thread clicking and pressing keys.
+
+        Matching replies by id is not enough by itself. _read_message() consumes from a shared
+        self.buf, so two threads reading at once interleave and each can end up holding half a
+        line - which surfaced as:
+
+            qmp.py line 85, in execute
             TimeoutError: timed out
 
-        in the run where recording and driving overlapped. The id is echoed in the reply, so a
-        response meant for another client is skipped instead of being mistaken for this one.
+        While the capture thread was mid-screendump. The lock makes one request-reply pair
+        atomic, so the threads take turns rather than splitting each other's bytes.
         """
-        self._seq = getattr(self, "_seq", 0) + 1
-        request_id = self._seq
-        payload = {"execute": command, "id": request_id}
-        if arguments:
-            payload["arguments"] = arguments
-        self.sock.sendall((json.dumps(payload) + "\n").encode())
-        while True:
-            msg = self._read_message()
-            if msg.get("id") == request_id and ("return" in msg or "error" in msg):
-                return msg
-            # Otherwise it is an event, or a reply to the other client: keep reading.
+        with self._lock:
+            self._seq = getattr(self, "_seq", 0) + 1
+            request_id = self._seq
+            payload = {"execute": command, "id": request_id}
+            if arguments:
+                payload["arguments"] = arguments
+            self.sock.sendall((json.dumps(payload) + "\n").encode())
+            while True:
+                msg = self._read_message()
+                if msg.get("id") == request_id and ("return" in msg or "error" in msg):
+                    return msg
+                # An event, or a reply meant for another request: keep reading.
 
     def close(self):
         try:

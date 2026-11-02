@@ -131,7 +131,12 @@ class Fixed:
             leaf = "cap-%05d.ppm" % self.shots
             try:
                 self.q.execute("screendump", filename="/frames/" + leaf)
-            except Exception:
+            except Exception as exc:
+                # A capture that fails must not take the sequence with it: the run is worth
+                # more than the video.
+                self.capture_errors = getattr(self, "capture_errors", 0) + 1
+                if self.capture_errors <= 3:
+                    log("capture failed: %s" % exc)
                 time.sleep(0.3)
                 continue
             self.captured += 1
