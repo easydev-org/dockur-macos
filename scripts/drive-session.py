@@ -231,6 +231,18 @@ def drive(frames, driver):
                 os.path.join(frames, "frame")]
     log("driving with %s" % driver)
     code, out, err = run(argv, timeout=3600)
+    # THE TRACEBACK IS THE ONLY THING THAT EXPLAINS A NON-ZERO EXIT.
+    #
+    # run() prints the last few lines of each stream, and a Python traceback is wider than
+    # that - a crash left nothing but 'the driver exited 1' in the log, with the actual error
+    # cut off above the window. The tail is echoed here in full.
+    if code != 0:
+        log("--- driver stderr ---")
+        for line in (err or "").rstrip().splitlines()[-30:]:
+            log("  " + line)
+        log("--- driver stdout ---")
+        for line in (out or "").rstrip().splitlines()[-12:]:
+            log("  " + line)
     if code != 0:
         log("the driver exited %d" % code)
     return code
@@ -243,6 +255,8 @@ def main():
     ap.add_argument("--workspace", required=True)
     ap.add_argument("--driver", default="fixed", choices=("fixed", "ocr"))
     ap.add_argument("--record-seconds", type=int, default=2400)
+    ap.add_argument("--record-grace", type=int, default=45,
+                    help="seconds to keep recording after a driver failure")
     args = ap.parse_args()
 
     log("session start")
@@ -255,6 +269,15 @@ def main():
     recorder = start_recording(frames, seconds=args.record_seconds)
 
     code = drive(frames, args.driver)
+
+    # LET THE RECORDING RUN ON AFTER THE DRIVER FINISHES.
+    #
+    # A driver that ends is not a guest that stopped drawing - and when it fails, the frames
+    # leading up to the failure are the ones worth watching. A grace period captures whatever
+    # the pane settles into before the guest is stopped.
+    if code != 0:
+        log("driver failed; recording %ds more before stopping" % args.record_grace)
+        time.sleep(args.record_grace)
 
     stop_recording(recorder, frames)
     run(["sudo", "chown", "-R", "%d:%d" % (os.getuid(), os.getgid()), frames])
