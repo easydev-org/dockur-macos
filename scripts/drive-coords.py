@@ -98,7 +98,19 @@ def find_button_row(ppm, y_lo=780, y_hi=825):
             if i + 2 >= len(data):
                 break
             r, g, b = data[i], data[i + 1], data[i + 2]
-            if abs(r - 233) <= 10 and abs(g - 233) <= 10 and abs(b - 233) <= 10:
+            # TWO DIFFERENT FILLS, and that is the point: on this pane the ENABLED button is
+            # drawn white and the DISABLED one grey. The image model read exactly that -
+            # 'Not Now: white background, black text; Continue: light grey background, light
+            # grey text' - and a scan that accepted only (233,233,233) found Continue and
+            # missed Not Now, which is why the last run logged
+            #
+            #   button row found: [(1275, 796), (1408, 796)]
+            #   button row not read; falling back to the measured Not Now
+            #
+            # A pill is either fill, so both are accepted.
+            is_grey = abs(r - 233) <= 10 and abs(g - 233) <= 10 and abs(b - 233) <= 10
+            is_white = r >= 246 and g >= 246 and b >= 246
+            if is_grey or is_white:
                 span.append(x)
         if len(span) > 60:
             rows.append((y, span))
