@@ -340,11 +340,27 @@ def country_pane(d, prefix):
     # list row answers to. A direct click on the row follows as a second attempt, because a
     # click alone moves the selection here without committing it - the two together cover
     # both behaviours.
-    log("country list at the U section; committing without moving the highlight")
-    d.key("ret", settle=1.2)
-    d.click(800, 610, settle=1.2, why="United States row, to be sure")
-    d.key("ret", settle=1.2)
-    d.key("spc", settle=2.5)
+    # THE COMMIT IS Tab x6 THEN Space, AND ONLY AFTER THE HIGHLIGHT IS ON THE ROW.
+    #
+    # This is the sequence that actually worked, from the run of 3e5c80e:
+    #
+    #   05:42:06  clicking country 'United States' at (764, 615)
+    #   05:42:37  highlight reached 'United States' after 1 steps
+    #   05:42:45  after choosing -> Select Your Country or Region Turkiye ...
+    #   05:43:34  after tab+space -> None          <- the pane changed
+    #
+    # Return on its own never commits this list, and a click moves the selection without
+    # committing it either. What commits is walking the focus ring away from the list and
+    # pressing Space on whatever it lands on - six Tabs from the list reaches Continue.
+    #
+    # The click goes to (764,615) exactly as that run did: x=764 is the label's own centre,
+    # and it is what put the highlight in range for the Down that follows.
+    log("country list at the U section; the proven commit sequence")
+    d.click(764, 615, settle=1.2, why="United States row")
+    d.key("ret", settle=1.0)
+    d.key("down", settle=0.9)
+    d.key("tab", settle=0.6, times=6)
+    d.key("spc", settle=3.0)
     d.shot(prefix, "country-after")
 
 
