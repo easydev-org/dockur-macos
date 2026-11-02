@@ -89,11 +89,46 @@ SHEET_SKIP = (1026, 634)
 #
 # The previous values were 38-68px high, so each click landed on the label above the box it
 # meant. That is why the full name received 'hi' instead of 'docker'.
-FULL_NAME = (900, 498)
-ACCOUNT_NAME = (900, 532)
-PASSWORD = (860, 618)
-VERIFY = (1020, 618)
-HINT = (900, 667)
+# Measured by scanning x=900 down the clean account pane (fx-1217), where the fields are the
+# bands of pure white between (243,243,243) dividers:
+#
+#   y=458..485   Full Name         centre 471
+#   y=486..510   Account Name      centre 498
+#   y=520..544   Password          centre 532
+#   y=558..588   (verify row, left)
+#   y=589..613   (verify row)
+#   y=623..647   Hint              centre 635
+#
+# The labels are PLACEHOLDERS drawn INSIDE the boxes, not captions above them - which is what
+# led me astray: OCR reported them at y=493/528/596 and I treated each as a caption, putting
+# every click one row too low. That is how the string meant for Full Name ended up in Hint.
+# Fields, measured on the clean account pane (fx-1217) by scanning across the white bands.
+# A row that is one wide white band is background; the rows that matter show as separate boxes:
+#
+#   y=498   x=802..1180            Account Name
+#   y=532   x=830..1180            Password row's outer box
+#   y=601   x=798..960 and x=1064..1180   <- Password and Verify, side by side
+#   y=635   x=830..1180            Hint
+#
+# The labels are PLACEHOLDERS INSIDE the boxes, not captions above them. OCR reported them at
+# y=493/528/596 and I read each as a caption, putting every click one row low - which is how the
+# string meant for Full Name ended up in Hint.
+# Field boxes located by their horizontal borders, scanning a clean column (x=750) of the
+# account pane in fx-1217. Each box is bounded by two 1px lines:
+#
+#   485 / 510   Full Name        centre 497
+#   519 / 544   Account Name     centre 531
+#   588..613    Password and Verify, side by side
+#   622 / 647   Hint             centre 634
+#
+# The labels are placeholders drawn INSIDE these boxes. OCR reported them at y=493/528/596, and
+# reading each as a caption above its field put every click one row low - which is how the text
+# meant for Full Name ended up in Hint.
+FULL_NAME = (960, 497)
+ACCOUNT_NAME = (960, 531)
+PASSWORD = (870, 600)
+VERIFY = (1120, 600)
+HINT = (960, 634)
 
 
 def _slug(text):
