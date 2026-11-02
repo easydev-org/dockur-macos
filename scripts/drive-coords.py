@@ -355,12 +355,27 @@ def country_pane(d, prefix):
     #
     # The click goes to (764,615) exactly as that run did: x=764 is the label's own centre,
     # and it is what put the highlight in range for the Down that follows.
-    log("country list at the U section; the proven commit sequence")
-    d.click(764, 615, settle=1.2, why="United States row")
-    d.key("ret", settle=1.0)
-    d.key("down", settle=0.9)
-    d.key("tab", settle=0.6, times=6)
-    d.key("spc", settle=3.0)
+    # CLICK THE ROW, PRESS RETURN, AND STOP THERE.
+    #
+    # Re-reading the run that got past this pane (3e5c80e), the pane had ALREADY changed
+    # before its Tab walk began:
+    #
+    #   05:42:06  clicking country 'United States' at (764, 615)
+    #   05:42:37  highlight reached 'United States' after 1 steps
+    #   05:42:45  after choosing -> Select Your Country or Region Turkiye ...   <- changed here
+    #   05:43:22  no button after commit; tabbing to it        <- already on a different pane
+    #   05:43:34  after tab+space -> None
+    #
+    # So the click and the Return were the commit; the Tab walk that followed was operating
+    # on the NEXT pane, not this one. Adding Down and six Tabs here sent the focus ring
+    # somewhere else entirely - the last run went black right after this step, which is what
+    # happens when the ring reaches the wizard's power controls.
+    #
+    # Click, Return, done. If the pane does not move, the frames will say so and the next
+    # step will click where it actually is.
+    log("country list at the U section; clicking the row and pressing Return")
+    d.click(764, 615, settle=1.5, why="United States row")
+    d.key("ret", settle=2.0)
     d.shot(prefix, "country-after")
 
 
