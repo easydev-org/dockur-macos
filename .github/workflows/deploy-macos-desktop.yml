@@ -332,9 +332,11 @@ jobs:
 
             # qemu in the image, driver on this host, joined by the QMP socket that
             # the bind mount makes visible to both.
+            # The VNC port is published so ffmpeg on this host can record the screen. qemu
+            # listens on 127.0.0.1:5900 inside the container; -p maps it out. The comment sits
+            # ABOVE the command on purpose: a comment between continuations ends the command,
+            # which is exactly what broke this step - docker run received no image.
             docker run -d --name driver \
-              # Published so ffmpeg on this host can record the screen. qemu listens on
-              # 127.0.0.1:5900 inside the container; -p maps it out.
               -p 127.0.0.1:5900:5900 \
               --device=/dev/kvm \
               --entrypoint sh \
