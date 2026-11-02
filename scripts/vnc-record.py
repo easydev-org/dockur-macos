@@ -47,6 +47,63 @@ class RFB:
                 raise ConnectionError("the server closed the connection")
             buf += chunk
         return buf
+
+    def handshake(self):
+        version = self._recv(12)
+        if not version.startswith(b"RFB "):
+            raise ConnectionError("not an RFB server: %r" % version[:12])
+        self.sock.sendall(b"RFB 003.008")
+        count = self._recv(1)[0]
+        if count == 0:
+            raise ConnectionError("the server offered no security types")
+        kinds = self._recv(count)
+        if 1 not in kinds:
+            raise ConnectionError("no unauthenticated access; offered %r" % list(kinds))
+        self.sock.sendall(bytes([1]))
+        self._recv(4)
+        self.sock.sendall(bytes([1]))
+        header = self._recv(24)
+        self.width, self.height = struct.unpack("!HH", header[:4])
+        log("desktop %dx%d" % (self.width, self.height))
+
+    def request_update(self, incremental=0):
+        self.sock.sendall(
+            struct.pack("!BBHHHH", 3, incremental, 0, 0, self.width, self.height))
+
+    def read_frame(self):
+        """Read messages until a FramebufferUpdate carrying RAW pixels arrives."""
+        while True:
+            kind = self._recv(1)[0]
+            if kind == 0:
+                self._recv(1)
+                count = struct.unpack("!H", self._recv(2))[0]
+                rects = []
+                for _ in range(count):
+                    x, y, w, h, enc = struct.unpack("!HHHHi", self._recv(12))
+                    if enc != 0:
+                        return None
+                    rects.append((x, y, w, h, self._recv(w * h * 4)))
+                return rects
+            if kind == 1:
+                self._recv(1)
+                count = struct.unpack("!H", self._recv(2))[0]
+                for _ in range(count):
+                    self._recv(8)
+                    self._recv(struct.unpack("!I", self._recv(4))[0])
+                continue
+            if kind == 2:
+                continue
+            if kind == 3:
+                self._recv(3)
+                self._recv(struct.unpack("!I", self._recv(4))[0])
+                continue
+            raise ConnectionError("unexpected server message %d" % kind)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
 #!/usr/bin/env python3
 """Record a qemu VNC display to an mp4, without ffmpeg and without a VNC library.
 
