@@ -200,25 +200,43 @@ def pick_country(d):
     d.key("pgdn", times=5, settle=0.8)
     d.key("pgup", settle=0.8)
     d.click(UNITED_STATES, "the United States row")
-    d.key("ret", settle=2.5, shot=True)
+    d.key("ret", settle=2.0, shot=True)
+    # THE COUNTRY PANE'S EXIT IS THIS CONTINUE, NOT THE ROW CLICK.
+    # The frames of the last run put it plainly: after the row click and Return the pane was
+    # still the country list, and it only became the transfer pane after this click was sent
+    # twice. So the click is part of the country step.
+    d.click(CONTINUE, "country Continue", settle=8.0)
 
 
 def set_up_as_new(d):
-    """The transfer pane: choose the fourth card, then Continue."""
-    d.wait(6, "transfer pane settles")
-    d.click(SET_UP_AS_NEW, "card 4, Set up as new")
-    d.click(CONTINUE, "transfer Continue")
+    """The transfer pane: choose the fourth card, then Continue.
+
+    The four cards, measured from this run's frame:
+
+      How do you want to transfer your information?     y=599
+      (1) From a Mac, Time Machine, or startup disk     y=636   radio at x=732..754
+      (2) From a Windows PC                             y=660
+      (3) Set up with iPhone or iPad                    y=683
+      (4) Set up as new                                 y=707..722, centre y=714
+
+    Card 4 is what keeps this Mac off the transfer path. In the last run the click meant for it
+    landed while the country pane was still up, so the wizard took card 1 by default and every
+    later step walked into the pairing flow.
+    """
+    d.wait(8, "transfer pane settles")
+    d.click(SET_UP_AS_NEW, "card 4, Set up as new", settle=2.0)
+    d.click(CONTINUE, "transfer Continue", settle=8.0)
 
 
 def languages(d):
-    d.wait(4)
-    d.click(CONTINUE, "languages Continue")
+    d.wait(8)
+    d.click(CONTINUE, "languages Continue", settle=8.0)
 
 
 def accessibility(d):
-    d.wait(4)
+    d.wait(8)
     d.key("ret", settle=1.5, shot=True)
-    d.click(CONTINUE, "accessibility Continue")
+    d.click(CONTINUE, "accessibility Continue", settle=8.0)
 
 
 def privacy_then_not_now(d):
@@ -228,8 +246,8 @@ def privacy_then_not_now(d):
     seconds and a failure alert that covers the way out. Not Now is at (1132,796) on the pane
     that appears, and is pressed straight after Continue so it lands while the pane is up.
     """
-    d.wait(4)
-    d.click(CONTINUE, "privacy Continue")
+    d.wait(8)
+    d.click(CONTINUE, "privacy Continue", settle=2.0)
     d.click(NOT_NOW_LEFT, "Not Now on the pairing pane", settle=2.5)
     d.click(NOT_NOW_LEFT, "Not Now again, in case the first was early", settle=2.5)
 
