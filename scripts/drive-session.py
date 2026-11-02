@@ -127,26 +127,23 @@ def wait_for_qmp(frames, attempts=40, pause=5):
 
 
 def start_recording(frames, seconds=2400, fps=2):
-    """Start ffmpeg on the VNC stream as a background process, returning it.
+    """Start the VNC recorder as a child process, returning it.
 
-    screendump costs 0.2-1.6s per frame and would perturb the action timing. VNC is passive:
-    the guest draws the same whether or not anyone is watching, and ffmpeg captures it at a
-    steady rate.
+    NOT ffmpeg -f vnc: the ffmpeg from Ubuntu is built without --enable-libvncclient and
+    answers 'Unknown input format: vnc'. scripts/vnc-record.py speaks RFB directly instead and
+    writes PPM frames, which are muxed into video afterwards.
     """
-    if shutil.which("ffmpeg") is None:
-        run(["sudo", "apt-get", "install", "-y", "-qq", "ffmpeg"])
-    out_path = os.path.join(frames, "session.mp4")
-    log_path = os.path.join(frames, "ffmpeg.log")
     argv = [
-        "ffmpeg", "-y", "-loglevel", "warning",
-        "-f", "vnc", "-r", str(fps), "-i", "127.0.0.1:5900",
-        "-t", str(seconds), "-r", str(fps), "-pix_fmt", "yuv420p",
-        out_path,
+        "python3", "scripts/vnc-record.py",
+        "--host", "127.0.0.1", "--port", "5900",
+        "--outdir", frames,
+        "--fps", str(fps), "--seconds", str(seconds),
     ]
-    log("recording to %s at %d fps" % (out_path, fps))
+    log("recording at %d fps via RFB" % fps)
+    log_path = os.path.join(frames, "vnc.log")
     with open(log_path, "w") as logf:
         proc = subprocess.Popen(argv, stdout=logf, stderr=subprocess.STDOUT)
-    time.sleep(3)
+    time.sleep(5)
     if proc.poll() is not None:
         run(["tail", "-20", log_path])
         log("recorder exited early")
@@ -156,37 +153,54 @@ def start_recording(frames, seconds=2400, fps=2):
 
 
 def stop_recording(proc, frames):
-    """Terminate ffmpeg and wait for it.
+    """Stop the recorder, then mux its frames into an mp4.
 
-    A hard kill leaves an mp4 with no moov atom, which no player will open, so this sends
-    SIGTERM and waits, killing only if it will not go.
+    SIGTERM first and a wait, because the recorder closes its socket and finishes the frame it
+    is writing; a kill would leave a truncated PPM. The mux is ffmpeg on the image sequence,
+    which needs no network input support.
     """
-    if proc is None:
-        return
-    log("stopping the recorder")
-    try:
-        proc.send_signal(signal.SIGTERM)
-    except OSError:
-        pass
-    for _ in range(30):
-        if proc.poll() is not None:
-            break
-        time.sleep(1)
-    if proc.poll() is None:
-        log("recorder ignored SIGTERM; killing")
-        proc.kill()
-        proc.wait(timeout=10)
+    if proc is not None:
+        log("stopping the recorder")
+        try:
+            proc.send_signal(signal.SIGTERM)
+        except OSError:
+            pass
+        for _ in range(20):
+            if proc.poll() is not None:
+                break
+            time.sleep(1)
+        if proc.poll() is None:
+            log("recorder ignored SIGTERM; killing")
+            proc.kill()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+    frames_list = sorted(n for n in os.listdir(frames)
+                         if n.startswith("vnc-") and n.endswith(".ppm"))
+    log("recorder produced %d frames" % len(frames_list))
     out_path = os.path.join(frames, "session.mp4")
+    if len(frames_list) < 2:
+        log("not enough frames to mux a video")
+        return
+    argv = [
+        "ffmpeg", "-y", "-loglevel", "warning",
+        "-framerate", "2",
+        "-pattern_type", "glob", "-i", os.path.join(frames, "vnc-*.ppm"),
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-r", "2",
+        out_path,
+    ]
+    code, out, err = run(argv)
     if os.path.exists(out_path):
-        size = os.path.getsize(out_path)
-        log("recording: %.1f MB" % (size / (1024.0 * 1024.0)))
-        code, out, err = run([
-            "ffprobe", "-v", "error", "-show_entries", "format=duration,size",
-            "-of", "default=nw=1", out_path], echo=False)
-        if out:
-            print(out, flush=True)
+        log("video: %.1f MB" % (os.path.getsize(out_path) / (1024.0 * 1024.0)))
     else:
-        log("no recording was produced")
+        log("muxing failed (exit %d)" % code)
+    for name in frames_list:
+        try:
+            os.remove(os.path.join(frames, name))
+        except OSError:
+            pass
+    log("removed %d intermediate frames" % len(frames_list))
 
 
 def drive(frames, driver):

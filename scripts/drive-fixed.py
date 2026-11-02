@@ -230,7 +230,7 @@ def set_up_as_new(d):
     # Three Downs also work, but a click at the measured position needs nothing else to be true:
     # it selects the row it lands on. Card 4's label runs y=707..722, so its centre is y=714, and
     # the radio column is at x=743.
-    d.click(SET_UP_AS_NEW, "card 4, Set up as new", settle=2.5, shot=True)
+    d.click(SET_UP_AS_NEW, "card 4, Set up as new", settle=2.5)
     d.click(CONTINUE, "transfer Continue", settle=8.0)
 
 
