@@ -33,7 +33,7 @@ def log(msg):
 class RFB:
     """Just enough of RFB 3.8 to receive RAW framebuffer updates."""
 
-    def __init__(self, host, port, timeout=20):
+    def __init__(self, host, port, timeout=120):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(timeout)
         self.width = 0
@@ -211,7 +211,19 @@ class Recorder:
             client.handshake()
             while not self.stop_flag.is_set() and time.time() < self.deadline:
                 client.request_update(0)
-                rects = client.read_frame()
+                try:
+                    rects = client.read_frame()
+                except socket.timeout:
+                    # THE SERVER SENDS NOTHING WHILE THE GUEST IS STILL BOOTING.
+                    #
+                    # The first attempt died here after exactly twenty seconds - the socket
+                    # timeout - and reported 'captured 0 frames, error: timed out'. qemu has no
+                    # framebuffer to describe until the guest draws something, so a read that
+                    # returns nothing is normal early on and must not end the recording. The
+                    # request is simply repeated - after a short pause, so a guest that draws
+                    # nothing for a minute does not turn this into a busy loop.
+                    time.sleep(self.interval)
+                    continue
                 if rects:
                     self.count += 1
                     name = "vnc-%05d.ppm" % self.count

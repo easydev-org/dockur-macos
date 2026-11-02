@@ -176,6 +176,12 @@ def stop_recording(proc, frames):
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+    log_path = os.path.join(frames, "vnc.log")
+    if os.path.exists(log_path):
+        log("--- vnc.log ---")
+        with open(log_path) as fh:
+            for line in fh.read().splitlines()[-25:]:
+                log("  " + line)
     frames_list = sorted(n for n in os.listdir(frames)
                          if n.startswith("vnc-") and n.endswith(".ppm"))
     log("recorder produced %d frames" % len(frames_list))
