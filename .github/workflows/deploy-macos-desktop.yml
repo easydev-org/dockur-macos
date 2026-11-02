@@ -311,6 +311,9 @@ jobs:
             # the same, and a comment that ended a docker run between continuation lines.
             # scripts/drive-session.py does the same work with argv lists and files.
             sudo apt-get install -y -qq tesseract-ocr ffmpeg || true
+            # One line, no continuations: a stray backslash between these names
+            # silently turns the rest into arguments of chmod.
+            chmod -R +x scripts || true
             DRIVER=fixed
             if [ "${{ inputs.force_coords }}" = "coords" ]; then DRIVER=ocr; fi
             sudo WANT_SSH="${{ github.event.inputs.want_ssh }}" \
