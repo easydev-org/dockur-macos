@@ -323,7 +323,7 @@ jobs:
             sudo udevadm trigger --name-match=kvm || true
             sudo chmod 666 /dev/kvm || true
 
-            chmod +x scripts/drive-in-container.sh scripts/drive-ocr.py scripts/drive-coords.py scripts/qmp.py scripts/ppm2png.py
+            chmod +x scripts/drive-in-container.sh scripts/drive-ocr.py scripts/drive-coords.py scripts/drive-fixed.py scripts/qmp.py scripts/ppm2png.py
             docker rm -f driver >/dev/null 2>&1 || true
 
             # qemu in the image, driver on this host, joined by the QMP socket that
@@ -357,7 +357,12 @@ jobs:
             # tesseract pass. That release is driven by coordinates instead: a fixed pane
             # order, each step a click, a key or a scroll at a measured position.
             if [ "${{ inputs.force_coords }}" = "true" ]; then
-              echo "using drive-coords.py (coordinates only)"
+              # drive-fixed.py: fixed clicks, keys and scrolls. It takes no screenshot and reads
+              # no pixel - the sequence and its delays were measured once, offline.
+              echo "using drive-fixed.py (fixed sequence, no reads)"
+              sudo python3 scripts/drive-fixed.py "$GITHUB_WORKSPACE/frames/monitor.sock" || true
+            elif [ "${{ inputs.force_coords }}" = "coords" ]; then
+              echo "using drive-coords.py (coordinates, with picture checks)"
               sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-coords.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
             else
               sudo WANT_SSH="${{ github.event.inputs.want_ssh }}"                     python3 scripts/drive-ocr.py "$GITHUB_WORKSPACE/frames/monitor.sock" "$GITHUB_WORKSPACE/frames/frame" || true
