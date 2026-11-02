@@ -62,15 +62,30 @@ class QMP:
         return json.loads(line)
 
     def execute(self, command, **arguments):
-        payload = {"execute": command}
+        """Send one command and return its reply, matched by request id.
+
+        THE ID MATTERS WHEN TWO PROGRAMS SHARE THE SOCKET. qemu accepts several connections,
+        and the recorder opens its own so that it can screendump five times a second without
+        colliding with the driver. Without an id, execute() took the next reply carrying
+        "return" - which belongs to whichever client asked first - and nothing stopped the two
+        from answering each other. That collision surfaced as:
+
+            TimeoutError: timed out
+
+        in the run where recording and driving overlapped. The id is echoed in the reply, so a
+        response meant for another client is skipped instead of being mistaken for this one.
+        """
+        self._seq = getattr(self, "_seq", 0) + 1
+        request_id = self._seq
+        payload = {"execute": command, "id": request_id}
         if arguments:
             payload["arguments"] = arguments
         self.sock.sendall((json.dumps(payload) + "\n").encode())
-        # Skip asynchronous events; return the first reply carrying 'return'.
         while True:
             msg = self._read_message()
-            if "return" in msg or "error" in msg:
+            if msg.get("id") == request_id and ("return" in msg or "error" in msg):
                 return msg
+            # Otherwise it is an event, or a reply to the other client: keep reading.
 
     def close(self):
         try:
