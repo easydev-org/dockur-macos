@@ -48,8 +48,20 @@ ALERT_OK = (959, 626)
 # land it on the U section with United States still on screen.
 COUNTRY_LIST = (900, 500)
 
-# 'Set up as new' - the fourth card on the transfer pane. Measured (869,671).
-SET_UP_AS_NEW = (869, 671)
+# The transfer pane's four cards, measured from frame-062 of the coordinate run. OCR gives
+# their label baselines, and the cards' radio marks sit 12px left of the labels:
+#
+#   How do you want to transfer your information?        y=599
+#   (1) From a Mac, Time Machine, or startup disk        y=636..648   label x=758..
+#   (2) From a Windows PC                                y=659..671   label x=758..
+#   (3) Set up with iPhone or iPad                       y=683..695   label x=758..
+#   (4) Set up as new                                    y=707..722   label x=758..
+#   radio mark for (1)                                   x=732..754, y=629..641
+#
+# The card row is left-aligned at x=743, so the whole row is clickable there. The value used
+# before, (869,671), lands on card TWO - which is why the pane kept coming back with
+# 'From a Mac, Time Machine, or startup disk' still selected.
+SET_UP_AS_NEW = (743, 714)
 
 # 'Are you sure you want to skip sign in?' sheet - Skip is the right-hand of its pair.
 SHEET_OK = (1026, 634)
@@ -288,11 +300,33 @@ def country_pane(d, prefix):
     d.keys("united states", per_char=0.3, clear=False)
     d.key("pgdn", settle=0.8, times=5)
     d.key("pgup", settle=0.8)
-    d.key("down", settle=0.8)
-    # Return does not commit on this release; Tab + Space does.
-    d.key("ret", settle=0.8, times=2)
-    d.key("tab", settle=0.6, times=6)
-    d.key("spc", settle=2.0)
+
+    # THE LIST IS NOW SHOWING THE RIGHT ROWS, so click the row itself.
+    #
+    # Measured on frame-031, taken right after this same sequence in an earlier run:
+    #
+    #   Turkmenistan           y=470
+    #   Turks & Caicos         y=490
+    #   Tuvalu                 y=510
+    #   Uganda                 y=530
+    #   Ukraine                y=550
+    #   United Arab Emirates   y=570
+    #   United Kingdom         y=590
+    #   United States          y=610     <- the one wanted
+    #   Uruguay                y=631
+    #
+    # So the scrolling was never the problem - the row has been on screen all along, and what
+    # failed was the commit: Down then Return then a Tab walk lands the highlight wherever the
+    # focus ring happens to be, not necessarily on this row.
+    #
+    # The row is clicked directly, at x=800 (inside the list, right of the radio column) and
+    # y=615 (the middle of United States' 20px line). Return and a Tab-Space follow, because a
+    # click on this list moves the selection in earlier runs without committing it.
+    log("country list is at the U section; clicking the United States row")
+    d.click(800, 615, settle=1.2, why="United States row")
+    d.key("ret", settle=1.0)
+    d.key("tab", settle=0.5, times=4)
+    d.key("spc", settle=2.5)
     d.shot(prefix, "country-after")
 
 
